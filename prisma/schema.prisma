@@ -1,0 +1,114 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id         String    @id @default(uuid())
+  name       String
+  phone      String    @unique
+  email      String?
+  isVerified Boolean   @default(false)
+  createdAt  DateTime  @default(now())
+  enquiries  Enquiry[]
+}
+
+model OtpRequest {
+  id        String   @id @default(uuid())
+  phone     String
+  otpHash   String
+  expiresAt DateTime
+  verified  Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([phone])
+}
+
+model Category {
+  id              String    @id @default(uuid())
+  name            String
+  slug            String    @unique
+  imageUrl        String?
+  metaTitle       String?
+  metaDescription String?
+  products        Product[]
+}
+
+model Product {
+  id              String    @id @default(uuid())
+  name            String
+  slug            String    @unique
+  description     String
+  price           Decimal?
+  images          String[]
+  categoryId      String
+  category        Category  @relation(fields: [categoryId], references: [id])
+  isActive        Boolean   @default(true)
+  metaTitle       String?
+  metaDescription String?
+  createdAt       DateTime  @default(now())
+  enquiries       Enquiry[]
+}
+
+model Offer {
+  id           String    @id @default(uuid())
+  title        String
+  description  String?
+  bannerImage  String?
+  discountText String?
+  linkUrl      String?
+  isActive     Boolean   @default(true)
+  startsAt     DateTime?
+  endsAt       DateTime?
+  createdAt    DateTime  @default(now())
+}
+
+model Enquiry {
+  id           String   @id @default(uuid())
+  userId       String?
+  user         User?    @relation(fields: [userId], references: [id])
+  productId    String?
+  product      Product? @relation(fields: [productId], references: [id])
+  name         String
+  phone        String
+  message      String
+  status       String   @default("new")
+  whatsappSent Boolean  @default(false)
+  createdAt    DateTime @default(now())
+}
+
+model BlogPost {
+  id              String    @id @default(uuid())
+  title           String
+  slug            String    @unique
+  content         String
+  coverImage      String?
+  metaTitle       String?
+  metaDescription String?
+  published       Boolean   @default(false)
+  publishedAt     DateTime?
+  createdAt       DateTime  @default(now())
+}
+
+model StaticPage {
+  id        String   @id @default(uuid())
+  key       String   @unique
+  title     String
+  content   String
+  updatedAt DateTime @updatedAt
+}
+
+model AdminUser {
+  id           String   @id @default(uuid())
+  username     String   @unique
+  email        String?  @unique
+  passwordHash String
+  totpSecret   String?
+  totpEnabled  Boolean  @default(false)
+  role         String   @default("admin")
+  createdAt    DateTime @default(now())
+}
