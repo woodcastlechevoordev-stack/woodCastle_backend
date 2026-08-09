@@ -22,11 +22,27 @@ const publicSelect = {
       id: true,
       name: true,
       slug: true,
+      parentId: true,
       metaTitle: true,
       metaDescription: true,
     },
   },
 };
+
+async function assertLeafCategory(categoryId) {
+  const category = await prisma.category.findUnique({
+    where: { id: categoryId },
+    include: { _count: { select: { children: true } } },
+  });
+  if (!category) throw createError(400, 'Invalid categoryId');
+  if (!category.parentId || category._count.children > 0) {
+    throw createError(
+      400,
+      'Products must be assigned to a subcategory (leaf level), not a top-level category'
+    );
+  }
+  return category;
+}
 
 async function listPublic(query = {}) {
   const where = { isActive: true };
@@ -76,10 +92,7 @@ async function create(data) {
   if (!data.categoryId) throw createError(400, 'categoryId is required');
   if (!data.description) throw createError(400, 'description is required');
 
-  const category = await prisma.category.findUnique({
-    where: { id: data.categoryId },
-  });
-  if (!category) throw createError(400, 'Invalid categoryId');
+  await assertLeafCategory(data.categoryId);
 
   const slug = data.slug?.trim() || toSlug(name);
 
@@ -106,10 +119,7 @@ async function update(id, data) {
   if (!existing) throw createError(404, 'Product not found');
 
   if (data.categoryId) {
-    const category = await prisma.category.findUnique({
-      where: { id: data.categoryId },
-    });
-    if (!category) throw createError(400, 'Invalid categoryId');
+    await assertLeafCategory(data.categoryId);
   }
 
   const name = data.name !== undefined ? data.name.trim() : undefined;
