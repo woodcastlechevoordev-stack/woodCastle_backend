@@ -13,6 +13,7 @@ const { publicRouter: pagesPublic, adminRouter: pagesAdmin } = require('./module
 const { publicRouter: blogPublic, adminRouter: blogAdmin } = require('./modules/blog/blog.routes');
 const { publicRouter: offersPublic, adminRouter: offersAdmin } = require('./modules/offers/offers.routes');
 const { publicRouter: enquiriesPublic, adminRouter: enquiriesAdmin } = require('./modules/enquiries/enquiries.routes');
+const { adminRouter: importAdmin } = require('./modules/bulk-import/bulk-import.routes');
 
 function createApp() {
   const app = express();
@@ -45,6 +46,7 @@ function createApp() {
   app.use('/api/admin/blog', blogAdmin);
   app.use('/api/admin/offers', offersAdmin);
   app.use('/api/admin/enquiries', enquiriesAdmin);
+  app.use('/api/admin/import', importAdmin);
 
   app.use(notFound);
   app.use(errorHandler);

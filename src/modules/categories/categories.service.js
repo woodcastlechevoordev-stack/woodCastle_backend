@@ -6,6 +6,16 @@ const {
 } = require('../../utils/helpers');
 const { createError } = require('../../middleware/errorHandler');
 
+const categoryPublicSelect = {
+  id: true,
+  name: true,
+  slug: true,
+  imageUrl: true,
+  metaTitle: true,
+  metaDescription: true,
+  parentId: true,
+};
+
 const productPublicSelect = {
   id: true,
   name: true,
@@ -19,35 +29,39 @@ const productPublicSelect = {
 };
 
 async function listPublic() {
-  return prisma.category.findMany({
+  const categories = await prisma.category.findMany({
+    where: { parentId: null },
     orderBy: { name: 'asc' },
     select: {
-      id: true,
-      name: true,
-      slug: true,
-      imageUrl: true,
-      metaTitle: true,
-      metaDescription: true,
+      ...categoryPublicSelect,
+      children: {
+        orderBy: { name: 'asc' },
+        select: categoryPublicSelect,
+      },
     },
   });
+
+  return categories;
 }
 
 async function productsByCategorySlug(slug, query = {}) {
   const category = await prisma.category.findUnique({
     where: { slug },
     select: {
-      id: true,
-      name: true,
-      slug: true,
-      imageUrl: true,
-      metaTitle: true,
-      metaDescription: true,
+      ...categoryPublicSelect,
+      children: { select: { id: true } },
     },
   });
 
   if (!category) throw createError(404, 'Category not found');
 
-  const where = { categoryId: category.id, isActive: true };
+  // Leaf subcategory → its products; top-level → products from all children
+  const categoryIds =
+    category.children.length > 0
+      ? category.children.map((c) => c.id)
+      : [category.id];
+
+  const where = { categoryId: { in: categoryIds }, isActive: true };
   const { page, limit, skip } = parsePagination(query);
 
   const [items, totalCount] = await Promise.all([
@@ -61,8 +75,10 @@ async function productsByCategorySlug(slug, query = {}) {
     prisma.product.count({ where }),
   ]);
 
+  const { children: _children, ...categoryPublic } = category;
+
   return {
-    category,
+    category: categoryPublic,
     ...paginatedResult(items, totalCount, page, limit),
   };
 }
@@ -70,8 +86,26 @@ async function productsByCategorySlug(slug, query = {}) {
 async function listAdmin() {
   return prisma.category.findMany({
     orderBy: { name: 'asc' },
-    include: { _count: { select: { products: true } } },
+    include: {
+      parent: { select: { id: true, name: true, slug: true } },
+      children: { select: { id: true, name: true, slug: true } },
+      _count: { select: { products: true } },
+    },
   });
+}
+
+async function assertValidParent(parentId) {
+  if (!parentId) return null;
+
+  const parent = await prisma.category.findUnique({ where: { id: parentId } });
+  if (!parent) throw createError(400, 'Invalid parentId');
+  if (parent.parentId) {
+    throw createError(
+      400,
+      'Parent must be a top-level category (nested deeper than 2 levels is not supported)'
+    );
+  }
+  return parent;
 }
 
 async function create(data) {
@@ -79,6 +113,9 @@ async function create(data) {
   if (!name) throw createError(400, 'Name is required');
 
   const slug = data.slug?.trim() || toSlug(name);
+  const parentId = data.parentId || null;
+
+  await assertValidParent(parentId);
 
   return prisma.category.create({
     data: {
@@ -87,6 +124,10 @@ async function create(data) {
       imageUrl: data.imageUrl || null,
       metaTitle: data.metaTitle || null,
       metaDescription: data.metaDescription || null,
+      parentId,
+    },
+    include: {
+      parent: { select: { id: true, name: true, slug: true } },
     },
   });
 }
@@ -101,6 +142,28 @@ async function update(id, data) {
       ? data.slug.trim() || toSlug(name || existing.name)
       : undefined;
 
+  let parentId;
+  if (data.parentId !== undefined) {
+    parentId = data.parentId || null;
+    if (parentId === id) {
+      throw createError(400, 'Category cannot be its own parent');
+    }
+    await assertValidParent(parentId);
+
+    // Prevent turning a parent with children into a subcategory
+    if (parentId) {
+      const childCount = await prisma.category.count({
+        where: { parentId: id },
+      });
+      if (childCount > 0) {
+        throw createError(
+          400,
+          'Cannot nest a category that already has subcategories'
+        );
+      }
+    }
+  }
+
   return prisma.category.update({
     where: { id },
     data: {
@@ -111,11 +174,21 @@ async function update(id, data) {
       ...(data.metaDescription !== undefined
         ? { metaDescription: data.metaDescription }
         : {}),
+      ...(parentId !== undefined ? { parentId } : {}),
+    },
+    include: {
+      parent: { select: { id: true, name: true, slug: true } },
+      children: { select: { id: true, name: true, slug: true } },
     },
   });
 }
 
 async function remove(id) {
+  const childCount = await prisma.category.count({ where: { parentId: id } });
+  if (childCount > 0) {
+    throw createError(400, 'Cannot delete category with subcategories');
+  }
+
   const productCount = await prisma.product.count({ where: { categoryId: id } });
   if (productCount > 0) {
     throw createError(400, 'Cannot delete category with products');
