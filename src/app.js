@@ -5,7 +5,6 @@ const morgan = require('morgan');
 
 const { notFound, errorHandler } = require('./middleware/errorHandler');
 
-const authRoutes = require('./modules/auth/auth.routes');
 const adminAuthRoutes = require('./modules/admin/admin.routes');
 const { publicRouter: categoriesPublic, adminRouter: categoriesAdmin } = require('./modules/categories/categories.routes');
 const { publicRouter: productsPublic, adminRouter: productsAdmin } = require('./modules/products/products.routes');
@@ -28,7 +27,6 @@ function createApp() {
   });
 
   // Public
-  app.use('/api/auth', authRoutes);
   app.use('/api/categories', categoriesPublic);
   app.use('/api/products', productsPublic);
   app.use('/api/pages', pagesPublic);

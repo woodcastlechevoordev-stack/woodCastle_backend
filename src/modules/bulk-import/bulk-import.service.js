@@ -1,6 +1,5 @@
 const XLSX = require('xlsx');
 const prisma = require('../../config/db');
-const { toSlug } = require('../../utils/helpers');
 const { createError } = require('../../middleware/errorHandler');
 
 const PREVIEW_TTL_MS = 60 * 60 * 1000; // 1 hour
@@ -62,8 +61,28 @@ function getField(data, aliases) {
   return '';
 }
 
-function parseBoolean(value, defaultValue = true) {
-  if (value === '' || value === null || value === undefined) return defaultValue;
+/** Top-level parent placeholders — field is required but means "no parent". */
+const TOP_LEVEL_PARENT_PLACEHOLDERS = new Set([
+  '—',
+  '–',
+  '-',
+  'none',
+  'n/a',
+  'na',
+  'null',
+]);
+
+function isBlank(value) {
+  return value === '' || value === null || value === undefined;
+}
+
+function isTopLevelParentPlaceholder(value) {
+  if (isBlank(value)) return false;
+  return TOP_LEVEL_PARENT_PLACEHOLDERS.has(String(value).trim().toLowerCase());
+}
+
+function parseBoolean(value) {
+  if (isBlank(value)) return null;
   if (typeof value === 'boolean') return value;
   const normalized = String(value).trim().toLowerCase();
   if (['true', '1', 'yes', 'y', 'active'].includes(normalized)) return true;
@@ -72,20 +91,29 @@ function parseBoolean(value, defaultValue = true) {
 }
 
 function parsePrice(value) {
-  if (value === '' || value === null || value === undefined) return { ok: true, value: null };
+  if (isBlank(value)) return { ok: false, missing: true, value: null };
   const num = typeof value === 'number' ? value : Number(String(value).replace(/,/g, ''));
-  if (Number.isNaN(num)) return { ok: false, value: null };
-  return { ok: true, value: num };
+  if (Number.isNaN(num)) return { ok: false, missing: false, value: null };
+  return { ok: true, missing: false, value: num };
 }
 
 function parseImages(value) {
-  if (!value) return [];
+  if (isBlank(value)) return [];
   if (Array.isArray(value)) return value.map(String).map((s) => s.trim()).filter(Boolean);
   // Spec: multiple URLs separated by pipe (|); first is primary, rest are gallery
   return String(value)
     .split('|')
     .map((s) => s.trim())
     .filter(Boolean);
+}
+
+function pushRequiredError(errors, row, sheet, field) {
+  errors.push({
+    row,
+    sheet,
+    field,
+    message: `${field} is required`,
+  });
 }
 
 function buildPreviewPayload(buffer) {
@@ -109,36 +137,54 @@ function buildPreviewPayload(buffer) {
 
   for (const { rowNumber, data } of categorySheet.rows) {
     const name = String(getField(data, ['category name', 'name']) || '').trim();
-    const parentCategoryName = String(
+    const parentRaw = String(
       getField(data, [
         'parent category name',
         'parent category',
         'parent',
       ]) || ''
     ).trim();
-    const slugRaw = String(getField(data, ['slug', 'category slug']) || '').trim();
-    const imageUrl =
-      String(getField(data, ['image url', 'image', 'banner image']) || '').trim() ||
-      null;
-    const metaTitle =
-      String(getField(data, ['meta title', 'metatitle']) || '').trim() || null;
-    const metaDescription =
-      String(getField(data, ['meta description', 'metadescription']) || '').trim() ||
-      null;
+    const slug = String(getField(data, ['slug', 'category slug']) || '').trim();
+    const imageUrl = String(
+      getField(data, ['image url', 'image', 'banner image']) || ''
+    ).trim();
+    const metaTitle = String(
+      getField(data, ['meta title', 'metatitle']) || ''
+    ).trim();
+    const metaDescription = String(
+      getField(data, ['meta description', 'metadescription']) || ''
+    ).trim();
+
+    let rowHasError = false;
 
     if (!name) {
-      errors.push({
-        row: rowNumber,
-        sheet: 'Categories',
-        field: 'Category Name',
-        message: 'Category Name is required',
-      });
-      continue;
+      pushRequiredError(errors, rowNumber, 'Categories', 'Category Name');
+      rowHasError = true;
+    }
+    if (!slug) {
+      pushRequiredError(errors, rowNumber, 'Categories', 'Slug');
+      rowHasError = true;
+    }
+    if (!parentRaw) {
+      pushRequiredError(errors, rowNumber, 'Categories', 'Parent Category Name');
+      rowHasError = true;
+    }
+    if (!imageUrl) {
+      pushRequiredError(errors, rowNumber, 'Categories', 'Image URL');
+      rowHasError = true;
+    }
+    if (!metaTitle) {
+      pushRequiredError(errors, rowNumber, 'Categories', 'Meta Title');
+      rowHasError = true;
+    }
+    if (!metaDescription) {
+      pushRequiredError(errors, rowNumber, 'Categories', 'Meta Description');
+      rowHasError = true;
     }
 
-    const slug = slugRaw || toSlug(name);
-    const nameKey = name.toLowerCase();
+    if (rowHasError) continue;
 
+    const nameKey = name.toLowerCase();
     if (categoryNameSet.has(nameKey)) {
       errors.push({
         row: rowNumber,
@@ -161,11 +207,16 @@ function buildPreviewPayload(buffer) {
     categoryNameSet.add(nameKey);
     categorySlugSet.add(slug);
 
+    // "—" / "NONE" (etc.) = top-level; otherwise keep parent name for lookup
+    const parentCategoryName = isTopLevelParentPlaceholder(parentRaw)
+      ? null
+      : parentRaw;
+
     categories.push({
       rowNumber,
       name,
       slug,
-      parentCategoryName: parentCategoryName || null,
+      parentCategoryName,
       imageUrl,
       metaTitle,
       metaDescription,
@@ -182,57 +233,41 @@ function buildPreviewPayload(buffer) {
         ''
     ).trim();
     const description = String(getField(data, ['description']) || '').trim();
-    const slugRaw = String(getField(data, ['slug', 'product slug']) || '').trim();
+    const slug = String(getField(data, ['slug', 'product slug']) || '').trim();
     const images = parseImages(getField(data, ['image url', 'image urls', 'images']));
     const priceRaw = getField(data, ['price']);
     const isActiveRaw = getField(data, ['is active', 'active', 'status']);
-    const metaTitle =
-      String(getField(data, ['meta title', 'metatitle']) || '').trim() || null;
-    const metaDescription =
-      String(getField(data, ['meta description', 'metadescription']) || '').trim() ||
-      null;
+    const metaTitle = String(
+      getField(data, ['meta title', 'metatitle']) || ''
+    ).trim();
+    const metaDescription = String(
+      getField(data, ['meta description', 'metadescription']) || ''
+    ).trim();
 
     let rowHasError = false;
 
     if (!name) {
-      errors.push({
-        row: rowNumber,
-        sheet: 'Products',
-        field: 'Product Name',
-        message: 'Product Name is required',
-      });
+      pushRequiredError(errors, rowNumber, 'Products', 'Product Name');
       rowHasError = true;
     }
     if (!categoryName) {
-      errors.push({
-        row: rowNumber,
-        sheet: 'Products',
-        field: 'Category Name',
-        message: 'Category Name is required',
-      });
+      pushRequiredError(errors, rowNumber, 'Products', 'Category Name');
       rowHasError = true;
     }
     if (!description) {
-      errors.push({
-        row: rowNumber,
-        sheet: 'Products',
-        field: 'Description',
-        message: 'Description is required',
-      });
+      pushRequiredError(errors, rowNumber, 'Products', 'Description');
       rowHasError = true;
     }
     if (!images.length) {
-      errors.push({
-        row: rowNumber,
-        sheet: 'Products',
-        field: 'Image URL',
-        message: 'Primary Image URL is required',
-      });
+      pushRequiredError(errors, rowNumber, 'Products', 'Image URL');
       rowHasError = true;
     }
 
     const priceResult = parsePrice(priceRaw);
-    if (!priceResult.ok) {
+    if (priceResult.missing) {
+      pushRequiredError(errors, rowNumber, 'Products', 'Price');
+      rowHasError = true;
+    } else if (!priceResult.ok) {
       errors.push({
         row: rowNumber,
         sheet: 'Products',
@@ -242,20 +277,36 @@ function buildPreviewPayload(buffer) {
       rowHasError = true;
     }
 
-    const isActive = parseBoolean(isActiveRaw, true);
-    if (isActive === null) {
+    if (isBlank(isActiveRaw)) {
+      pushRequiredError(errors, rowNumber, 'Products', 'Is Active');
+      rowHasError = true;
+    }
+    const isActive = parseBoolean(isActiveRaw);
+    if (!isBlank(isActiveRaw) && isActive === null) {
       errors.push({
         row: rowNumber,
         sheet: 'Products',
         field: 'Is Active',
-        message: 'Is Active must be true/false (or blank for true)',
+        message: 'Is Active must be TRUE or FALSE',
       });
+      rowHasError = true;
+    }
+
+    if (!slug) {
+      pushRequiredError(errors, rowNumber, 'Products', 'Slug');
+      rowHasError = true;
+    }
+    if (!metaTitle) {
+      pushRequiredError(errors, rowNumber, 'Products', 'Meta Title');
+      rowHasError = true;
+    }
+    if (!metaDescription) {
+      pushRequiredError(errors, rowNumber, 'Products', 'Meta Description');
       rowHasError = true;
     }
 
     if (rowHasError) continue;
 
-    const slug = slugRaw || toSlug(name);
     if (productSlugSet.has(slug)) {
       errors.push({
         row: rowNumber,

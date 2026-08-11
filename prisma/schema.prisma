@@ -8,24 +8,12 @@ datasource db {
 }
 
 model User {
-  id         String    @id @default(uuid())
-  name       String
-  phone      String    @unique
-  email      String?
-  isVerified Boolean   @default(false)
-  createdAt  DateTime  @default(now())
-  enquiries  Enquiry[]
-}
-
-model OtpRequest {
-  id        String   @id @default(uuid())
-  phone     String
-  otpHash   String
-  expiresAt DateTime
-  verified  Boolean  @default(false)
-  createdAt DateTime @default(now())
-
-  @@index([phone])
+  id        String    @id @default(uuid())
+  name      String
+  phone     String    @unique
+  email     String?
+  createdAt DateTime  @default(now())
+  enquiries Enquiry[]
 }
 
 model Category {
@@ -95,17 +83,16 @@ model PendingBulkImport {
 }
 
 model Enquiry {
-  id           String   @id @default(uuid())
-  userId       String?
-  user         User?    @relation(fields: [userId], references: [id])
-  productId    String?
-  product      Product? @relation(fields: [productId], references: [id])
-  name         String
-  phone        String
-  message      String
-  status       String   @default("new")
-  whatsappSent Boolean  @default(false)
-  createdAt    DateTime @default(now())
+  id        String   @id @default(uuid())
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id])
+  productId String?
+  product   Product? @relation(fields: [productId], references: [id])
+  name      String
+  phone     String
+  message   String
+  status    String   @default("new")
+  createdAt DateTime @default(now())
 }
 
 model BlogPost {

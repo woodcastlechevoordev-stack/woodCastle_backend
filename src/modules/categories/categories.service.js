@@ -184,18 +184,34 @@ async function update(id, data) {
 }
 
 async function remove(id) {
-  const childCount = await prisma.category.count({ where: { parentId: id } });
-  if (childCount > 0) {
-    throw createError(400, 'Cannot delete category with subcategories');
+  const existing = await prisma.category.findUnique({
+    where: { id },
+    include: {
+      _count: { select: { products: true, children: true } },
+    },
+  });
+  if (!existing) throw createError(404, 'Category not found');
+
+  if (existing._count.children > 0) {
+    throw createError(
+      400,
+      'Cannot delete category while it still has subcategories — reassign or remove those first'
+    );
   }
 
-  const productCount = await prisma.product.count({ where: { categoryId: id } });
-  if (productCount > 0) {
-    throw createError(400, 'Cannot delete category with products');
+  if (existing._count.products > 0) {
+    throw createError(
+      400,
+      'Cannot delete category while it still has products — reassign or remove those first'
+    );
   }
 
   await prisma.category.delete({ where: { id } });
-  return { message: 'Category deleted' };
+
+  return {
+    message: 'Category deleted',
+    name: existing.name,
+  };
 }
 
 module.exports = {

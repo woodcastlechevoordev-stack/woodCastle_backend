@@ -12,12 +12,11 @@ This document specifies the backend for **Woodcastle**, a wood furniture shop's 
 | Framework | Express.js | Simple, well-documented, easy for a first backend |
 | Database | PostgreSQL | Relational data (products ↔ categories ↔ enquiries) fits well |
 | ORM | Prisma | Auto-generates types, migrations, and a friendly query API |
-| Auth (user) | JWT (access token) + OTP via Firebase Phone Auth or Twilio Verify | Simple stateless auth for users |
 | Auth (admin) | JWT + username/password + optional TOTP (`otplib` + `qrcode` npm packages) | Username/password login, with Google Authenticator-based 2FA as a second factor |
 | File storage | Cloudinary or Firebase Storage | Product images, blog images, offer banners |
 | Spreadsheet parsing | `xlsx` (SheetJS) npm package | Parses uploaded .xlsx files for bulk product/category import |
-| WhatsApp | Meta WhatsApp Cloud API (or Twilio WhatsApp API) | Server-side auto-send of enquiries |
-| Hosting | Render / Railway / a VPS | Any Node-friendly host; avoid serverless for WhatsApp webhooks if using long-lived connections |
+| WhatsApp | `wa.me` click-to-chat link (no API/business verification needed) | Enquiry opens WhatsApp with a prefilled message; customer taps send themselves — zero cost, zero approval wait |
+| Hosting | Render / Railway / a VPS | Any Node-friendly host |
 
 ---
 
@@ -30,18 +29,11 @@ backend/
 │   └── migrations/
 ├── src/
 │   ├── config/
-│   │   ├── db.js
-│   │   ├── firebase.js
-│   │   └── whatsapp.js
+│   │   └── db.js
 │   ├── middleware/
-│   │   ├── auth.js          # verifies JWT for user routes
 │   │   ├── adminAuth.js      # verifies JWT for admin routes
 │   │   └── errorHandler.js
 │   ├── modules/
-│   │   ├── auth/
-│   │   │   ├── auth.controller.js
-│   │   │   ├── auth.service.js
-│   │   │   └── auth.routes.js
 │   │   ├── products/
 │   │   ├── categories/
 │   │   ├── enquiries/
@@ -51,9 +43,8 @@ backend/
 │   │   ├── pages/            # about, terms & conditions (CMS content)
 │   │   └── admin/
 │   ├── utils/
-│   │   ├── otp.js
 │   │   ├── totp.js           # generates/verifies Google Authenticator codes
-│   │   └── whatsappSender.js
+│   │   └── whatsappLink.js   # builds the wa.me click-to-chat URL for an enquiry
 │   ├── app.js
 │   └── server.js
 ├── .env.example
@@ -70,18 +61,8 @@ model User {
   name        String
   phone       String     @unique
   email       String?
-  isVerified  Boolean    @default(false)
   createdAt   DateTime   @default(now())
   enquiries   Enquiry[]
-}
-
-model OtpRequest {
-  id          String     @id @default(uuid())
-  phone       String
-  otpHash     String
-  expiresAt   DateTime
-  verified    Boolean    @default(false)
-  createdAt   DateTime   @default(now())
 }
 
 model Category {
@@ -147,7 +128,6 @@ model Enquiry {
   phone         String
   message       String
   status        String     @default("new")   // new, contacted, closed
-  whatsappSent  Boolean    @default(false)
   createdAt     DateTime   @default(now())
 }
 
@@ -206,20 +186,14 @@ GET    /api/blog/:slug
 
 GET    /api/offers                # active offers only (isActive + within startsAt/endsAt window)
 
-POST   /api/enquiries              # creates enquiry + triggers WhatsApp send + creates/updates user
-                                     # body: { name, phone, message, productId }
+POST   /api/enquiries              # creates/updates User by phone (no verification step), creates Enquiry,
+                                     # and returns a ready-to-use wa.me click-to-chat link
+                                     # body: { name, phone, message, productId } -> response: { enquiry, whatsappLink }
 ```
 
 All product/category/blog GET responses include `metaTitle` and `metaDescription` so the Next.js frontend can populate `<head>` tags without a second request.
 
 **Pagination:** `/api/products`, `/api/categories/:slug/products`, and `/api/blog` accept optional `?page=` and `?limit=` query params (default `limit=12`), returning `{ items, page, totalPages, totalCount }`. This supports the frontend's "Load More" button pattern — no new feature, just pagination on endpoints that already existed in this spec.
-
-### Auth (OTP flow)
-
-```
-POST   /api/auth/send-otp          # body: { phone } -> sends OTP via SMS/WhatsApp
-POST   /api/auth/verify-otp        # body: { phone, otp } -> marks User.isVerified = true, returns JWT
-```
 
 ### Admin Auth (username/password + optional Google Authenticator 2FA)
 
@@ -245,7 +219,9 @@ DELETE /api/admin/products/:id
 
 POST   /api/admin/categories
 PATCH  /api/admin/categories/:id
-DELETE /api/admin/categories/:id
+DELETE /api/admin/categories/:id   # should reject with a clear error if the category still has
+                                     # products or child subcategories attached, rather than
+                                     # silently orphaning them — reassign or remove those first
 
 POST   /api/admin/blog
 PATCH  /api/admin/blog/:id
@@ -267,22 +243,20 @@ PATCH  /api/admin/pages/:key       # edit about/terms/contact content
 
 ---
 
-## 5. Enquiry → WhatsApp → Registration Flow (Phase 1 core logic)
+## 5. Enquiry → WhatsApp Flow (Phase 1 core logic)
 
-This is the flow that ties registration, OTP, and WhatsApp together:
+No OTP verification service is used in Phase 1 — enquiries are captured directly, and WhatsApp is handled via a free `wa.me` click-to-chat link rather than the paid/approval-gated Business API.
 
-1. **User submits enquiry form** on a product page (`POST /api/enquiries`).
+1. **User submits enquiry form** on a product page (`POST /api/enquiries`, body: `{ name, phone, message, productId }`).
 2. Backend:
-   - Finds or creates a `User` record by phone number (`isVerified: false` if new).
+   - Finds or creates a `User` record by phone number (no verification step — the record is created directly from the submitted name/phone).
    - Creates the `Enquiry` record linked to that user and product.
-   - Calls `whatsappSender.js` to push the enquiry to WhatsApp (both to the admin's business number and, if using templates, a confirmation to the customer).
-   - Marks `Enquiry.whatsappSent = true` on success.
-3. **Response to frontend** includes a flag saying "verify your phone to complete registration."
-4. Frontend prompts for OTP → `POST /api/auth/send-otp`.
-5. User enters OTP → `POST /api/auth/verify-otp` → backend checks `OtpRequest`, marks `User.isVerified = true`, issues JWT.
-6. Enquiry is now tied to a verified, registered user.
+   - Builds a `wa.me` link via `whatsappLink.js`: `https://wa.me/<WHATSAPP_ADMIN_NUMBER>?text=<url-encoded message>`, where the message includes the customer's name, phone, product name, and their enquiry text — so the admin sees full context the moment they open WhatsApp.
+3. **Response to frontend**: `{ enquiry, whatsappLink }`.
+4. Frontend immediately opens `whatsappLink` (e.g. `window.open(whatsappLink, '_blank')`) — this opens WhatsApp (web or app) with the message pre-filled in a chat with the admin's number. The **customer taps send themselves** — this is the one manual step required by the free, zero-approval approach, versus a paid Business API that could send it fully automatically.
+5. The enquiry is already saved and visible in the admin's `/admin/enquiries` inbox regardless of whether the customer actually taps send on WhatsApp — the backend doesn't depend on that step succeeding.
 
-**Note on WhatsApp automation:** true server-side auto-send (no user tap required) needs the Meta WhatsApp Cloud API or Twilio WhatsApp API, both of which require business verification and pre-approved message templates for the first outbound message to a new number. Budget 1-2 weeks lead time for approval before backend work depends on it. A `wa.me` click-to-chat link is a zero-approval fallback but requires the user to tap "send" themselves.
+**Why click-to-chat instead of the Business API:** the Meta/Twilio WhatsApp Business APIs require business verification and pre-approved message templates before they can message a new number — real cost and 1-2 weeks of lead time. `wa.me` links work instantly, for free, with no approval process, at the cost of requiring the customer to tap "send" themselves. If the client wants fully automated server-side sending later, that's a Phase 2+ upgrade path, not something this spec assumes.
 
 ---
 
@@ -312,13 +286,15 @@ This is the feature that lets you upload 10+ products at once instead of adding 
 
 1. **Admin uploads the .xlsx file** via `POST /api/admin/import/preview` (multipart form upload).
 2. Backend parses it with the `xlsx` (SheetJS) library, reading the **Categories** sheet first, then the **Products** sheet.
-3. **Validation, per row:**
-   - Required fields present (Category Name; for products: Product Name, Category Name, Description, Image URL)
+3. **Validation, per row — every column is required** (per the client's requirement, no optional fields in bulk import, unlike the single-item admin forms which still allow some fields to stay blank):
+   - **Categories sheet:** `Category Name`, `Slug`, `Parent Category Name` (top-level categories use a fixed placeholder value like `"—"` or `"NONE"` here instead of leaving it blank, since the field itself is now required), `Image URL`, `Meta Title`, `Meta Description` — all must be filled
+   - **Products sheet:** `Product Name`, `Category Name`, `Description`, `Image URL`, `Price`, `Is Active`, `Slug`, `Meta Title`, `Meta Description` — all must be filled
    - Every product's `Category Name` matches a **subcategory** either already in the database or present in this same sheet's Categories tab (case-insensitive match) — products are never assigned directly to a top-level category
-   - Every subcategory row's `Parent Category Name` (if filled) matches a top-level category, either already in the database or elsewhere in the same sheet
-   - `Price` is numeric if provided
-   - `Is Active` parses to a boolean (defaults to `true` if blank)
+   - Every subcategory row's `Parent Category Name` matches a top-level category, either already in the database or elsewhere in the same sheet
+   - `Price` is numeric
+   - `Is Active` parses to a boolean (`TRUE`/`FALSE`, case-insensitive)
    - Duplicate `slug` values within the sheet itself are flagged
+   - A row with any blank required cell is rejected with a specific "X is required" error naming the exact column, same as the errors you saw in the preview screenshot earlier
 4. Backend returns a **preview** (not yet saved): counts of rows to be created vs. updated (matched by slug against existing records), plus a list of row-level errors with row number, field, and message — this is what the admin panel shows before anything goes live.
 5. Admin reviews the preview in the UI, fixes the sheet and re-uploads if there are errors, or clicks "Confirm Import."
 6. `POST /api/admin/import/confirm` commits the rows: creates new categories/products, or **updates existing ones** if the slug already matches a record in the database (so re-uploading a corrected sheet is safe — it won't create duplicates).
@@ -335,19 +311,7 @@ DATABASE_URL=postgresql://user:password@localhost:5432/woodcastle_db
 JWT_SECRET=
 JWT_EXPIRES_IN=7d
 
-# OTP provider (pick one)
-FIREBASE_PROJECT_ID=
-FIREBASE_PRIVATE_KEY=
-FIREBASE_CLIENT_EMAIL=
-# or
-TWILIO_ACCOUNT_SID=
-TWILIO_AUTH_TOKEN=
-TWILIO_VERIFY_SERVICE_SID=
-
-# WhatsApp
-WHATSAPP_PROVIDER=meta            # or "twilio"
-WHATSAPP_PHONE_NUMBER_ID=
-WHATSAPP_ACCESS_TOKEN=
+# WhatsApp click-to-chat (no API keys needed — just the admin's number, digits only, with country code)
 WHATSAPP_ADMIN_NUMBER=
 
 # Media storage
@@ -370,13 +334,10 @@ PORT=5000
 6. Offers CRUD + public read endpoint
 7. Admin 2FA (TOTP setup/enable/disable/verify) — add once basic admin login works
 8. Bulk import (preview + confirm endpoints, using the xlsx template) — build once product/category CRUD is solid, since import reuses the same validation rules
-9. Enquiry creation endpoint (without WhatsApp yet — just save to DB)
-10. OTP send/verify flow for customers (get this working standalone)
-11. Wire enquiry creation to trigger OTP flow + create/link User
-12. WhatsApp integration (start with Meta Cloud API sandbox/test number)
-13. Connect admin panel (Next.js) to all admin endpoints
+9. Enquiry creation endpoint, including the `whatsappLink.js` builder (this is just string formatting, no external API — much simpler than the old OTP+WhatsApp-API flow, can be built and tested in one pass)
+10. Connect admin panel (Next.js) to all admin endpoints
 
-Building in this order means you have a working, testable backend at every step, and WhatsApp — the piece with external approval dependencies — doesn't block everything else.
+Building in this order means you have a working, testable backend at every step. Removing the OTP/WhatsApp-API dependency also removes what used to be the one external-approval bottleneck in this build — nothing in Phase 1 now depends on a third party approving anything.
 
 ---
 
@@ -384,5 +345,7 @@ Building in this order means you have a working, testable backend at every step,
 
 - Payment/billing (Phase 2)
 - Furniture customisation / configurable product options (Phase 2)
-- Rate limiting / spam protection on the enquiry form (recommended even for Phase 1 — add `express-rate-limit` on `/api/enquiries` and `/api/auth/send-otp`)
+- OTP/phone verification for enquiries — deliberately not used in Phase 1 per the client's decision; could be added later if fake/spam enquiries become a real problem
+- True server-side WhatsApp auto-send (Business API) — deliberately not used in Phase 1; the `wa.me` click-to-chat link requires the customer to tap send themselves, which is the accepted trade-off for avoiding API cost and business verification
+- Rate limiting / spam protection on the enquiry form (recommended even for Phase 1, and more relevant now that there's no OTP step filtering submissions — add `express-rate-limit` on `/api/enquiries`)
 - Admin 2FA recovery process if a device is lost (needs a manual/support-based recovery path before real client handoff)

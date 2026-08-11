@@ -1,8 +1,13 @@
 const prisma = require('../../config/db');
-const { sendEnquiryWhatsApp } = require('../../utils/whatsappSender');
+const { buildEnquiryWhatsAppLink } = require('../../utils/whatsappLink');
 const { createError } = require('../../middleware/errorHandler');
 
 const ALLOWED_STATUSES = new Set(['new', 'contacted', 'closed']);
+
+const enquiryInclude = {
+  product: { select: { id: true, name: true, slug: true } },
+  user: { select: { id: true, name: true, phone: true } },
+};
 
 async function createEnquiry({ name, phone, message, productId }) {
   if (!name?.trim() || !phone?.trim() || !message?.trim()) {
@@ -23,17 +28,16 @@ async function createEnquiry({ name, phone, message, productId }) {
       data: {
         name: name.trim(),
         phone: normalizedPhone,
-        isVerified: false,
       },
     });
-  } else if (user.name !== name.trim() && !user.isVerified) {
+  } else if (user.name !== name.trim()) {
     user = await prisma.user.update({
       where: { id: user.id },
       data: { name: name.trim() },
     });
   }
 
-  let enquiry = await prisma.enquiry.create({
+  const enquiry = await prisma.enquiry.create({
     data: {
       userId: user.id,
       productId: productId || null,
@@ -41,42 +45,15 @@ async function createEnquiry({ name, phone, message, productId }) {
       phone: normalizedPhone,
       message: message.trim(),
     },
-    include: {
-      product: { select: { id: true, name: true, slug: true } },
-      user: { select: { id: true, name: true, phone: true, isVerified: true } },
-    },
+    include: enquiryInclude,
   });
 
-  let whatsappSent = false;
-  try {
-    await sendEnquiryWhatsApp({
-      enquiry,
-      product: enquiry.product,
-      user: enquiry.user,
-    });
-    whatsappSent = true;
-    enquiry = await prisma.enquiry.update({
-      where: { id: enquiry.id },
-      data: { whatsappSent: true },
-      include: {
-        product: { select: { id: true, name: true, slug: true } },
-        user: { select: { id: true, name: true, phone: true, isVerified: true } },
-      },
-    });
-  } catch (err) {
-    // Enquiry is saved even if WhatsApp fails — log and continue
-    // eslint-disable-next-line no-console
-    console.error('WhatsApp send failed:', err.message);
-  }
-
-  return {
+  const whatsappLink = buildEnquiryWhatsAppLink({
     enquiry,
-    whatsappSent,
-    requiresPhoneVerification: !user.isVerified,
-    message: user.isVerified
-      ? 'Enquiry submitted'
-      : 'Enquiry submitted — verify your phone to complete registration',
-  };
+    product: enquiry.product,
+  });
+
+  return { enquiry, whatsappLink };
 }
 
 async function listAdmin(query = {}) {
@@ -86,12 +63,7 @@ async function listAdmin(query = {}) {
   return prisma.enquiry.findMany({
     where,
     orderBy: { createdAt: 'desc' },
-    include: {
-      product: { select: { id: true, name: true, slug: true } },
-      user: {
-        select: { id: true, name: true, phone: true, isVerified: true },
-      },
-    },
+    include: enquiryInclude,
   });
 }
 
@@ -103,12 +75,7 @@ async function updateStatus(id, status) {
   return prisma.enquiry.update({
     where: { id },
     data: { status },
-    include: {
-      product: { select: { id: true, name: true, slug: true } },
-      user: {
-        select: { id: true, name: true, phone: true, isVerified: true },
-      },
-    },
+    include: enquiryInclude,
   });
 }
 
