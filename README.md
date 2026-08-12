@@ -14,6 +14,7 @@ This document specifies the backend for **Woodcastle**, a wood furniture shop's 
 | ORM | Prisma | Auto-generates types, migrations, and a friendly query API |
 | Auth (admin) | JWT + username/password + optional TOTP (`otplib` + `qrcode` npm packages) | Username/password login, with Google Authenticator-based 2FA as a second factor |
 | File storage | Cloudinary or Firebase Storage | Product images, blog images, offer banners |
+| Cloudinary SDK | `cloudinary` npm package | Server-side signature generation only — see section 5b; the SDK never handles the actual file upload |
 | Spreadsheet parsing | `xlsx` (SheetJS) npm package | Parses uploaded .xlsx files for bulk product/category import |
 | WhatsApp | `wa.me` click-to-chat link (no API/business verification needed) | Enquiry opens WhatsApp with a prefilled message; customer taps send themselves — zero cost, zero approval wait |
 | Hosting | Render / Railway / a VPS | Any Node-friendly host |
@@ -41,7 +42,8 @@ backend/
 │   │   ├── offers/
 │   │   ├── bulk-import/
 │   │   ├── pages/            # about, terms & conditions (CMS content)
-│   │   └── admin/
+│   │   ├── admin/
+│   │   └── upload/           # Cloudinary signed-upload signature (files never hit this server)
 │   ├── utils/
 │   │   ├── totp.js           # generates/verifies Google Authenticator codes
 │   │   └── whatsappLink.js   # builds the wa.me click-to-chat URL for an enquiry
@@ -213,11 +215,20 @@ POST   /api/admin/2fa/disable        # body: { password } -> turns 2FA back off
 GET    /api/admin/enquiries
 PATCH  /api/admin/enquiries/:id    # update status
 
-POST   /api/admin/products
+POST   /api/admin/upload/signature # generates a Cloudinary signed-upload signature (see section 5b) —
+                                     # NOT a file upload endpoint itself; the actual file goes straight
+                                     # from the browser to Cloudinary, never through this backend
+
+POST   /api/admin/products         # body must include categoryId set to a SUBCATEGORY's id (never a
+                                     # top-level category's id) — reject with a clear error if the
+                                     # given categoryId belongs to a category that has children
+                                     # (i.e. it's a main category, not a leaf)
 PATCH  /api/admin/products/:id
 DELETE /api/admin/products/:id
 
-POST   /api/admin/categories
+POST   /api/admin/categories       # body accepts parentId (nullable) — omit or send null for a
+                                     # top-level category, or a valid top-level category's id to
+                                     # create a subcategory under it
 PATCH  /api/admin/categories/:id
 DELETE /api/admin/categories/:id   # should reject with a clear error if the category still has
                                      # products or child subcategories attached, rather than
@@ -272,7 +283,32 @@ This gives you exactly what was asked for: username + password as the first fact
 
 ---
 
-## 5b. Bulk Product/Category Import (Excel Upload) Flow
+## 5b. Image Upload Flow (Cloudinary Signed Upload)
+
+This was previously described only narratively ("direct-to-Cloudinary signed upload") without an actual API contract — that's what caused PROD-06 and MISC-01 to fail in testing, since there was nothing concrete to implement against. Here's the exact contract:
+
+**The file itself never touches this backend.** This backend's only job is to hand the frontend a short-lived, signed permission slip to upload directly to Cloudinary. This keeps large image uploads off your Render instance entirely.
+
+1. **Frontend requests a signature** before uploading: `POST /api/admin/upload/signature` (admin JWT required), optional body `{ folder: "products" }` (or `"categories"`, `"offers"`, `"blog"`).
+2. **Backend generates the signature** server-side using the Cloudinary API secret (via the `cloudinary` npm SDK's `utils.api_sign_request`), based on a timestamp and the target folder — the secret itself never leaves the backend. Response:
+   ```json
+   {
+     "signature": "a1b2c3...",
+     "timestamp": 1755000000,
+     "apiKey": "your_cloudinary_api_key",
+     "cloudName": "your_cloud_name",
+     "folder": "products"
+   }
+   ```
+3. **Frontend uploads directly to Cloudinary** using these values — a plain multipart `POST` from the browser to `https://api.cloudinary.com/v1_1/<cloudName>/image/upload`, with the file plus `signature`, `timestamp`, `api_key`, and `folder` as form fields. This request goes straight to Cloudinary's servers, not this backend.
+4. **Cloudinary responds directly to the frontend** with the uploaded image's `secure_url`.
+5. **Frontend saves that URL** as part of the normal product/category/offer create-or-update call (e.g. `POST /api/admin/products` with `images: ["https://res.cloudinary.com/.../image.jpg"]`) — same as if the URL had been typed in manually.
+
+This is why `POST /api/admin/upload` returning a 404 in testing was expected once you know the real contract — that route was never meant to accept the file. The only backend route needed is the signature endpoint above.
+
+---
+
+## 5c. Bulk Product/Category Import (Excel Upload) Flow
 
 This is the feature that lets you upload 10+ products at once instead of adding them one by one in the admin UI, using the `woodcastle-product-upload-template.xlsx` template.
 
@@ -333,9 +369,10 @@ PORT=5000
 5. Blog CRUD + read endpoints
 6. Offers CRUD + public read endpoint
 7. Admin 2FA (TOTP setup/enable/disable/verify) — add once basic admin login works
-8. Bulk import (preview + confirm endpoints, using the xlsx template) — build once product/category CRUD is solid, since import reuses the same validation rules
-9. Enquiry creation endpoint, including the `whatsappLink.js` builder (this is just string formatting, no external API — much simpler than the old OTP+WhatsApp-API flow, can be built and tested in one pass)
-10. Connect admin panel (Next.js) to all admin endpoints
+8. Image upload signature endpoint (`POST /api/admin/upload/signature`) — needed before the admin forms' image uploads can work at all; wire this up before building out the product/category/offer forms on the frontend
+9. Bulk import (preview + confirm endpoints, using the xlsx template) — build once product/category CRUD is solid, since import reuses the same validation rules
+10. Enquiry creation endpoint, including the `whatsappLink.js` builder (this is just string formatting, no external API — much simpler than the old OTP+WhatsApp-API flow, can be built and tested in one pass)
+11. Connect admin panel (Next.js) to all admin endpoints
 
 Building in this order means you have a working, testable backend at every step. Removing the OTP/WhatsApp-API dependency also removes what used to be the one external-approval bottleneck in this build — nothing in Phase 1 now depends on a third party approving anything.
 
