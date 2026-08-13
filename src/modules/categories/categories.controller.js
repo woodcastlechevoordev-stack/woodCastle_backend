@@ -15,7 +15,7 @@ const productsBySlug = asyncHandler(async (req, res) => {
 });
 
 const adminList = asyncHandler(async (req, res) => {
-  const categories = await service.listAdmin();
+  const categories = await service.listAdmin(req.query);
   res.json(categories);
 });
 

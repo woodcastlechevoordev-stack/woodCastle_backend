@@ -42,8 +42,7 @@ backend/
 │   │   ├── offers/
 │   │   ├── bulk-import/
 │   │   ├── pages/            # about, terms & conditions (CMS content)
-│   │   ├── admin/
-│   │   └── upload/           # Cloudinary signed-upload signature (files never hit this server)
+│   │   └── admin/
 │   ├── utils/
 │   │   ├── totp.js           # generates/verifies Google Authenticator codes
 │   │   └── whatsappLink.js   # builds the wa.me click-to-chat URL for an enquiry
@@ -179,7 +178,9 @@ GET    /api/categories/:slug/products
 `GET /api/categories` returns a nested tree — top-level categories (`parentId: null`) each with a `children` array of their subcategories. Products are always assigned to a **subcategory** (the leaf level), not a top-level category, matching how Woodcastle's actual catalog (Sofa & Sofa Sets → 3 Seater Sofa, etc.) is structured.
 
 ```
-GET    /api/products
+GET    /api/products               # accepts ?search= (matches product name/description) and
+                                     # ?category= (subcategory slug) for the homepage search + filter feature,
+                                     # plus existing ?page=/?limit= pagination
 GET    /api/products/:slug
 
 GET    /api/pages/:key            # about, terms, contact content
@@ -212,13 +213,16 @@ POST   /api/admin/2fa/disable        # body: { password } -> turns 2FA back off
 ### Admin (protected by adminAuth middleware, requires completed login above)
 
 ```
-GET    /api/admin/enquiries
+GET    /api/admin/enquiries        # accepts ?search= (matches name/phone/product name) and ?status=
 PATCH  /api/admin/enquiries/:id    # update status
 
 POST   /api/admin/upload/signature # generates a Cloudinary signed-upload signature (see section 5b) —
                                      # NOT a file upload endpoint itself; the actual file goes straight
                                      # from the browser to Cloudinary, never through this backend
 
+GET    /api/admin/products         # returns ALL products regardless of isActive (unlike the public
+                                     # GET /api/products, which only shows active ones) — accepts
+                                     # ?search= (name/description) and ?categoryId= to filter
 POST   /api/admin/products         # body must include categoryId set to a SUBCATEGORY's id (never a
                                      # top-level category's id) — reject with a clear error if the
                                      # given categoryId belongs to a category that has children
@@ -226,6 +230,8 @@ POST   /api/admin/products         # body must include categoryId set to a SUBCA
 PATCH  /api/admin/products/:id
 DELETE /api/admin/products/:id
 
+GET    /api/admin/categories       # returns the full category tree regardless of any active/inactive
+                                     # concept — accepts ?search= (matches name at either level)
 POST   /api/admin/categories       # body accepts parentId (nullable) — omit or send null for a
                                      # top-level category, or a valid top-level category's id to
                                      # create a subcategory under it
@@ -234,10 +240,15 @@ DELETE /api/admin/categories/:id   # should reject with a clear error if the cat
                                      # products or child subcategories attached, rather than
                                      # silently orphaning them — reassign or remove those first
 
+GET    /api/admin/blog             # returns ALL posts including unpublished drafts (unlike the public
+                                     # GET /api/blog, which only shows published ones) — accepts
+                                     # ?search= (title) and ?published= filter
 POST   /api/admin/blog
 PATCH  /api/admin/blog/:id
 DELETE /api/admin/blog/:id
 
+GET    /api/admin/offers           # returns ALL offers regardless of active date window (unlike the
+                                     # public GET /api/offers) — accepts ?search= (title) and ?isActive=
 POST   /api/admin/offers
 PATCH  /api/admin/offers/:id
 DELETE /api/admin/offers/:id

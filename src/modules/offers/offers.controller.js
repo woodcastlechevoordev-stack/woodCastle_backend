@@ -7,7 +7,7 @@ const list = asyncHandler(async (req, res) => {
 });
 
 const adminList = asyncHandler(async (req, res) => {
-  const offers = await service.listAdmin();
+  const offers = await service.listAdmin(req.query);
   res.json(offers);
 });
 

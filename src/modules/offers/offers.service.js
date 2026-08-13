@@ -1,5 +1,9 @@
 const prisma = require('../../config/db');
 const { createError } = require('../../middleware/errorHandler');
+const {
+  containsInsensitive,
+  parseBooleanQuery,
+} = require('../../utils/helpers');
 
 async function listActive() {
   const now = new Date();
@@ -16,8 +20,18 @@ async function listActive() {
   });
 }
 
-async function listAdmin() {
-  return prisma.offer.findMany({ orderBy: { createdAt: 'desc' } });
+async function listAdmin(query = {}) {
+  const where = {};
+  const titleMatch = containsInsensitive(query.search);
+  if (titleMatch) where.title = titleMatch;
+
+  const isActive = parseBooleanQuery(query.isActive);
+  if (isActive !== undefined) where.isActive = isActive;
+
+  return prisma.offer.findMany({
+    where,
+    orderBy: { createdAt: 'desc' },
+  });
 }
 
 async function create(data) {

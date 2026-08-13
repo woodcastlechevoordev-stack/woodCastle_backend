@@ -1,6 +1,7 @@
 const prisma = require('../../config/db');
 const { buildEnquiryWhatsAppLink } = require('../../utils/whatsappLink');
 const { createError } = require('../../middleware/errorHandler');
+const { containsInsensitive } = require('../../utils/helpers');
 
 const ALLOWED_STATUSES = new Set(['new', 'contacted', 'closed']);
 
@@ -59,6 +60,15 @@ async function createEnquiry({ name, phone, message, productId }) {
 async function listAdmin(query = {}) {
   const where = {};
   if (query.status) where.status = query.status;
+
+  const search = containsInsensitive(query.search);
+  if (search) {
+    where.OR = [
+      { name: search },
+      { phone: search },
+      { product: { name: search } },
+    ];
+  }
 
   return prisma.enquiry.findMany({
     where,
