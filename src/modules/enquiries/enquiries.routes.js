@@ -12,6 +12,7 @@ const enquiryLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'Too many enquiries, try again later' },
+  validate: { xForwardedForHeader: false },
 });
 
 publicRouter.post('/', enquiryLimiter, controller.create);

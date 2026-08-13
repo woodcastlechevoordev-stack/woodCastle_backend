@@ -18,6 +18,9 @@ const { adminRouter: uploadAdmin } = require('./modules/upload/upload.routes');
 function createApp() {
   const app = express();
 
+  // Render (and similar hosts) terminate TLS and set X-Forwarded-For
+  app.set('trust proxy', 1);
+
   app.use(helmet());
   app.use(cors());
   app.use(express.json({ limit: '2mb' }));
