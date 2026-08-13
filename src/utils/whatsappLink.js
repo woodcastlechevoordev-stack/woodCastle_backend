@@ -6,10 +6,7 @@ function buildEnquiryWhatsAppLink({ enquiry, product }) {
   const adminNumber = String(process.env.WHATSAPP_ADMIN_NUMBER || '').replace(/\D/g, '');
 
   if (!adminNumber) {
-    throw Object.assign(
-      new Error('WHATSAPP_ADMIN_NUMBER is not configured'),
-      { status: 500 }
-    );
+    return null;
   }
 
   const productLabel = product?.name || 'General enquiry';

@@ -18,6 +18,17 @@ function errorHandler(err, req, res, next) {
     return res.status(404).json({ error: 'Record not found' });
   }
 
+  if (err.code === 'P2022') {
+    return res.status(500).json({
+      error: 'Database schema mismatch — Prisma client needs to be regenerated',
+      code: err.code,
+    });
+  }
+
+  if (err.code === 'P2003') {
+    return res.status(400).json({ error: 'Invalid related record' });
+  }
+
   if (err.status) {
     return res.status(err.status).json({ error: err.message });
   }
@@ -25,6 +36,7 @@ function errorHandler(err, req, res, next) {
   const status = err.statusCode || 500;
   return res.status(status).json({
     error: status === 500 ? 'Internal server error' : err.message,
+    ...(status === 500 && err.code ? { code: err.code } : {}),
   });
 }
 
