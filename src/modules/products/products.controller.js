@@ -12,7 +12,7 @@ const getBySlug = asyncHandler(async (req, res) => {
 });
 
 const adminList = asyncHandler(async (req, res) => {
-  const products = await service.listAdmin();
+  const products = await service.listAdmin(req.query);
   res.json(products);
 });
 

@@ -3,6 +3,7 @@ const {
   toSlug,
   parsePagination,
   paginatedResult,
+  containsInsensitive,
 } = require('../../utils/helpers');
 const { createError } = require('../../middleware/errorHandler');
 
@@ -83,8 +84,13 @@ async function productsByCategorySlug(slug, query = {}) {
   };
 }
 
-async function listAdmin() {
+async function listAdmin(query = {}) {
+  const where = {};
+  const nameMatch = containsInsensitive(query.search);
+  if (nameMatch) where.name = nameMatch;
+
   return prisma.category.findMany({
+    where,
     orderBy: { name: 'asc' },
     include: {
       parent: { select: { id: true, name: true, slug: true } },

@@ -3,6 +3,7 @@ const {
   toSlug,
   parsePagination,
   paginatedResult,
+  containsInsensitive,
 } = require('../../utils/helpers');
 const { createError } = require('../../middleware/errorHandler');
 
@@ -46,9 +47,19 @@ async function assertLeafCategory(categoryId) {
 
 async function listPublic(query = {}) {
   const where = { isActive: true };
-  if (query.categoryId) where.categoryId = query.categoryId;
-  if (query.categorySlug) {
-    where.category = { slug: query.categorySlug };
+  const categorySlug = query.category || query.categorySlug;
+  if (categorySlug) {
+    where.category = { slug: categorySlug };
+  } else if (query.categoryId) {
+    where.categoryId = query.categoryId;
+  }
+
+  const nameOrDescription = containsInsensitive(query.search);
+  if (nameOrDescription) {
+    where.OR = [
+      { name: nameOrDescription },
+      { description: nameOrDescription },
+    ];
   }
 
   const { page, limit, skip } = parsePagination(query);
@@ -77,8 +88,20 @@ async function getBySlug(slug) {
   return product;
 }
 
-async function listAdmin() {
+async function listAdmin(query = {}) {
+  const where = {};
+  if (query.categoryId) where.categoryId = query.categoryId;
+
+  const nameOrDescription = containsInsensitive(query.search);
+  if (nameOrDescription) {
+    where.OR = [
+      { name: nameOrDescription },
+      { description: nameOrDescription },
+    ];
+  }
+
   return prisma.product.findMany({
+    where,
     orderBy: { createdAt: 'desc' },
     include: {
       category: { select: { id: true, name: true, slug: true } },

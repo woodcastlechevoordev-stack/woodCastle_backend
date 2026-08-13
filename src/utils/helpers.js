@@ -24,4 +24,25 @@ function paginatedResult(items, totalCount, page, limit) {
   return { items, page, totalPages, totalCount };
 }
 
-module.exports = { toSlug, asyncHandler, parsePagination, paginatedResult };
+function containsInsensitive(value) {
+  const term = String(value ?? '').trim();
+  if (!term) return null;
+  return { contains: term, mode: 'insensitive' };
+}
+
+function parseBooleanQuery(value) {
+  if (value === undefined || value === null || value === '') return undefined;
+  const normalized = String(value).toLowerCase();
+  if (normalized === 'true' || normalized === '1') return true;
+  if (normalized === 'false' || normalized === '0') return false;
+  return undefined;
+}
+
+module.exports = {
+  toSlug,
+  asyncHandler,
+  parsePagination,
+  paginatedResult,
+  containsInsensitive,
+  parseBooleanQuery,
+};

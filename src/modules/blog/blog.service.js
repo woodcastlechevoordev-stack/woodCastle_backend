@@ -3,6 +3,8 @@ const {
   toSlug,
   parsePagination,
   paginatedResult,
+  containsInsensitive,
+  parseBooleanQuery,
 } = require('../../utils/helpers');
 const { createError } = require('../../middleware/errorHandler');
 
@@ -45,8 +47,18 @@ async function getBySlug(slug) {
   return post;
 }
 
-async function listAdmin() {
-  return prisma.blogPost.findMany({ orderBy: { createdAt: 'desc' } });
+async function listAdmin(query = {}) {
+  const where = {};
+  const titleMatch = containsInsensitive(query.search);
+  if (titleMatch) where.title = titleMatch;
+
+  const published = parseBooleanQuery(query.published);
+  if (published !== undefined) where.published = published;
+
+  return prisma.blogPost.findMany({
+    where,
+    orderBy: { createdAt: 'desc' },
+  });
 }
 
 async function create(data) {
