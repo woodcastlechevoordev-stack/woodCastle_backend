@@ -5,7 +5,16 @@ const {
   paginatedResult,
   containsInsensitive,
 } = require('../../utils/helpers');
+const { sanitizeRichText } = require('../../utils/sanitizeHtml');
 const { createError } = require('../../middleware/errorHandler');
+
+function sanitizePublicProduct(product) {
+  if (!product) return product;
+  return {
+    ...product,
+    description: sanitizeRichText(product.description),
+  };
+}
 
 const categoryPublicSelect = {
   id: true,
@@ -80,7 +89,12 @@ async function productsByCategorySlug(slug, query = {}) {
 
   return {
     category: categoryPublic,
-    ...paginatedResult(items, totalCount, page, limit),
+    ...paginatedResult(
+      items.map(sanitizePublicProduct),
+      totalCount,
+      page,
+      limit
+    ),
   };
 }
 

@@ -6,7 +6,16 @@ const {
   containsInsensitive,
   parseBooleanQuery,
 } = require('../../utils/helpers');
+const { sanitizeRichText } = require('../../utils/sanitizeHtml');
 const { createError } = require('../../middleware/errorHandler');
+
+function sanitizePublicPost(post) {
+  if (!post) return post;
+  return {
+    ...post,
+    content: sanitizeRichText(post.content),
+  };
+}
 
 const publicSelect = {
   id: true,
@@ -35,7 +44,7 @@ async function listPublic(query = {}) {
     prisma.blogPost.count({ where }),
   ]);
 
-  return paginatedResult(items, totalCount, page, limit);
+  return paginatedResult(items.map(sanitizePublicPost), totalCount, page, limit);
 }
 
 async function getBySlug(slug) {
@@ -44,7 +53,7 @@ async function getBySlug(slug) {
     select: publicSelect,
   });
   if (!post) throw createError(404, 'Blog post not found');
-  return post;
+  return sanitizePublicPost(post);
 }
 
 async function listAdmin(query = {}) {

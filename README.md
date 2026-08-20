@@ -83,7 +83,8 @@ model Product {
   id              String     @id @default(uuid())
   name            String
   slug            String     @unique
-  description     String
+  description     String     // stores HTML from the rich text editor (bold/italic/color/lists/tables) —
+                               // see backend spec note on sanitization before rendering on the public site
   price           Decimal?
   images          String[]
   categoryId      String
@@ -291,6 +292,16 @@ No OTP verification service is used in Phase 1 — enquiries are captured direct
 5. 2FA can be turned off from admin settings (`POST /api/admin/2fa/disable`) by re-entering the password — useful if the admin loses their device, though for a production client you'd typically want a manual recovery process too.
 
 This gives you exactly what was asked for: username + password as the first factor, Google Authenticator as an optional second factor, without forcing 2FA on day one if the client just wants to launch quickly.
+
+---
+
+## 5a2. Rich Text Product Descriptions (Bold, Italic, Color, Lists, Tables)
+
+Product descriptions support formatting (bold, italic, text color, bullet/numbered lists, tables) — same rich text editor already used for blog posts (Tiptap), reused here rather than building a separate one.
+
+- `Product.description` stores the editor's **HTML output** directly, same as `BlogPost.content` already does
+- **Sanitize on the way out, not just the way in:** since this HTML renders directly on public product pages, run it through a sanitizer (e.g. `sanitize-html` or `DOMPurify` server-side, or `rehype-sanitize` if rendering via a markdown/HTML pipeline) before it's ever sent to the public site — restrict to the tags Tiptap actually produces (`b`/`strong`, `i`/`em`, `span` with color styles, `ul`/`ol`/`li`, `table`/`tr`/`td`/`th`) and strip anything else. This matters because the admin panel is the only thing writing this field, but sanitizing on output is still the safer habit — it protects against any future second admin account, a compromised login, or a bug in the editor itself producing unexpected markup
+- No schema change beyond what's already there — `description` was always a `String`, it's just storing richer content now
 
 ---
 
