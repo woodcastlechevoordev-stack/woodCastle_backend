@@ -33,6 +33,7 @@ model Product {
   id              String    @id @default(uuid())
   name            String
   slug            String    @unique
+  /// HTML from the rich text editor (bold/italic/color/lists/tables) — sanitize before public responses
   description     String
   price           Decimal?
   images          String[]

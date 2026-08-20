@@ -5,7 +5,16 @@ const {
   paginatedResult,
   containsInsensitive,
 } = require('../../utils/helpers');
+const { sanitizeRichText } = require('../../utils/sanitizeHtml');
 const { createError } = require('../../middleware/errorHandler');
+
+function sanitizePublicProduct(product) {
+  if (!product) return product;
+  return {
+    ...product,
+    description: sanitizeRichText(product.description),
+  };
+}
 
 const publicSelect = {
   id: true,
@@ -75,7 +84,12 @@ async function listPublic(query = {}) {
     prisma.product.count({ where }),
   ]);
 
-  return paginatedResult(items, totalCount, page, limit);
+  return paginatedResult(
+    items.map(sanitizePublicProduct),
+    totalCount,
+    page,
+    limit
+  );
 }
 
 async function getBySlug(slug) {
@@ -85,7 +99,7 @@ async function getBySlug(slug) {
   });
 
   if (!product) throw createError(404, 'Product not found');
-  return product;
+  return sanitizePublicProduct(product);
 }
 
 async function listAdmin(query = {}) {
