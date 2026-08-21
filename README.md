@@ -40,6 +40,7 @@ backend/
 │   │   ├── enquiries/
 │   │   ├── blog/
 │   │   ├── offers/
+│   │   ├── reviews/
 │   │   ├── bulk-import/
 │   │   ├── pages/            # about, terms & conditions (CMS content)
 │   │   └── admin/
@@ -94,6 +95,7 @@ model Product {
   metaDescription String?
   createdAt       DateTime   @default(now())
   enquiries       Enquiry[]
+  reviews         Review[]
 }
 
 model Offer {
@@ -154,6 +156,19 @@ model StaticPage {
   updatedAt     DateTime   @updatedAt
 }
 
+model Review {
+  id            String     @id @default(uuid())
+  customerName  String
+  rating        Int        // 1-5
+  reviewText    String
+  customerPhoto String?    // optional — uploaded the same way as product images
+  productId     String?    // optional — a review can be tied to a specific product, or left
+                             // blank for a general/site-wide testimonial
+  product       Product?   @relation(fields: [productId], references: [id])
+  isActive      Boolean    @default(true)   // admin controls what's actually visible on the site
+  createdAt     DateTime   @default(now())
+}
+
 model AdminUser {
   id            String     @id @default(uuid())
   username      String     @unique
@@ -190,6 +205,14 @@ GET    /api/blog/:slug
 
 GET    /api/offers                # active offers only (isActive + within startsAt/endsAt window)
 
+GET    /api/reviews               # active reviews only (isActive: true); accepts optional
+                                    # ?productId= to get reviews for one specific product,
+                                    # omit it to get general/site-wide testimonials
+
+GET    /api/google-reviews        # server-side proxy to Google Places API — see section 5d.
+                                    # Returns { rating, totalReviews, reviews: [...] } (up to 5),
+                                    # cached, never calls Google directly from the browser
+
 POST   /api/enquiries              # creates/updates User by phone (no verification step), creates Enquiry,
                                      # and returns a ready-to-use wa.me click-to-chat link
                                      # body: { name, phone, message, productId } -> response: { enquiry, whatsappLink }
@@ -224,6 +247,10 @@ POST   /api/admin/upload/signature # generates a Cloudinary signed-upload signat
 GET    /api/admin/products         # returns ALL products regardless of isActive (unlike the public
                                      # GET /api/products, which only shows active ones) — accepts
                                      # ?search= (name/description) and ?categoryId= to filter
+
+GET    /api/admin/products/check-duplicate-name   # accepts ?name=&categoryId= (subcategory id) -
+                                     # see section 5a3 for the full behavior and response shape
+
 POST   /api/admin/products         # body must include categoryId set to a SUBCATEGORY's id (never a
                                      # top-level category's id) — reject with a clear error if the
                                      # given categoryId belongs to a category that has children
@@ -261,7 +288,15 @@ POST   /api/admin/import/confirm    # body: { importId } -> commits the previous
                                      # (creates new categories/products, updates existing ones matched by slug)
 GET    /api/admin/import/history    # list of past BulkImportLog entries
 
+GET    /api/admin/pages            # list all StaticPage entries (about/terms/contact) for the admin's
+                                     # site content editor — public GET /api/pages/:key only fetches one at a time
 PATCH  /api/admin/pages/:key       # edit about/terms/contact content
+
+GET    /api/admin/reviews          # returns ALL reviews regardless of isActive — accepts ?search=
+                                     # (customer name/text) and ?productId= filter
+POST   /api/admin/reviews          # body: { customerName, rating, reviewText, customerPhoto?, productId? }
+PATCH  /api/admin/reviews/:id
+DELETE /api/admin/reviews/:id
 ```
 
 ---
@@ -302,6 +337,31 @@ Product descriptions support formatting (bold, italic, text color, bullet/number
 - `Product.description` stores the editor's **HTML output** directly, same as `BlogPost.content` already does
 - **Sanitize on the way out, not just the way in:** since this HTML renders directly on public product pages, run it through a sanitizer (e.g. `sanitize-html` or `DOMPurify` server-side, or `rehype-sanitize` if rendering via a markdown/HTML pipeline) before it's ever sent to the public site — restrict to the tags Tiptap actually produces (`b`/`strong`, `i`/`em`, `span` with color styles, `ul`/`ol`/`li`, `table`/`tr`/`td`/`th`) and strip anything else. This matters because the admin panel is the only thing writing this field, but sanitizing on output is still the safer habit — it protects against any future second admin account, a compromised login, or a bug in the editor itself producing unexpected markup
 - No schema change beyond what's already there — `description` was always a `String`, it's just storing richer content now
+
+---
+
+## 5a3. Duplicate Product Name Detection (Auto-Generated Product Code)
+
+**Why this matters:** `Product.slug` is unique across the *entire* catalog, not just within a category. Two products both named "Dining Chair" in the same subcategory would generate the same slug and collide — this feature catches that at the moment of typing, rather than as a confusing save error later.
+
+**No schema change needed** — the generated code gets appended directly into the `name` field itself (and the `slug` derived from that new name), not stored as a separate column. This keeps the fix contained to name/slug generation rather than adding a new concept to the data model.
+
+1. As the admin types a product name (and has a subcategory selected), the frontend calls `GET /api/admin/products/check-duplicate-name?name=<name>&categoryId=<subcategoryId>` (debounced, same pattern as the search suggestions — don't fire on every keystroke).
+2. Backend checks for existing products with the same name (case-insensitive) **within that exact subcategory only** — a "Dining Chair" in a different subcategory doesn't count as a duplicate.
+3. If matches exist, generate a short code: take the subcategory's initials (e.g. "Dining Chair" → `DC`) plus a running number one higher than the current match count, zero-padded to 2 digits (e.g. `DC-02` for the second one). Response:
+   ```json
+   {
+     "isDuplicate": true,
+     "existingCount": 1,
+     "suggestedCode": "DC-02",
+     "suggestedName": "Dining Chair DC-02",
+     "suggestedSlug": "dining-chair-dc-02"
+   }
+   ```
+   If no match, `isDuplicate: false` and the rest of the fields are omitted.
+4. **Safety net at save time:** even if the frontend check is somehow skipped or stale, `POST /api/admin/products` should still reject a request whose generated slug would collide with an existing one, returning a clear error — the live-check is a convenience, not the only line of defense.
+
+See section 8 of the frontend spec ("Duplicate product name detection") for the confirmation dialog and field-update behavior this powers.
 
 ---
 
@@ -362,6 +422,21 @@ This is the feature that lets you upload 10+ products at once instead of adding 
 
 ---
 
+## 5d. Google Reviews Integration (Read-Only Display)
+
+This is a companion to the admin-entered `Review` model above, not a replacement for it — it pulls Woodcastle's real Google Business reviews into a small "As Seen on Google" widget, separate from the fully-controlled admin-curated reviews section.
+
+**The real constraint:** Google's official Places API caps out at 5 reviews per business, chosen by Google's own relevance algorithm — there's no way to request more, paginate, or pick which ones show. This has been a standing limitation for years and isn't something this integration can work around. If genuinely *all* Google reviews are needed, that requires the separate Google Business Profile API, which needs Google's business-owner approval process (written/video application, weeks of lead time) — treat that as a distinct, optional future addition, not part of this spec.
+
+**How it works:**
+1. One-time setup: find Woodcastle's Google **Place ID** (via Google's Place ID Finder tool, using the business's Maps listing) and add it to the backend's environment variables.
+2. `GET /api/google-reviews` calls Google's Places API **server-side** (Place Details request, requesting the `rating`, `userRatingCount`, and `reviews` fields) using `GOOGLE_PLACES_API_KEY` — this key stays on the backend and is never sent to the browser.
+3. **Cache the result** (e.g. revalidate every 24 hours, not on every page load) — this respects Google's usage policies around not hammering the API, and keeps this well within the free monthly credit at Woodcastle's traffic scale.
+4. Response shape: `{ rating: 4.8, totalReviews: 142, reviews: [{ authorName, rating, text, relativeTimeDescription, profilePhotoUrl }, ...up to 5] }`.
+5. **Display requirements (Google's terms, not optional):** show the Google "G" logo/attribution near the widget, and link back to the actual Google Maps listing — don't present the reviews as if they're independently verified by Woodcastle.
+
+---
+
 ## 6. Environment Variables (.env.example)
 
 ```
@@ -377,6 +452,10 @@ CLOUDINARY_CLOUD_NAME=
 CLOUDINARY_API_KEY=
 CLOUDINARY_API_SECRET=
 
+# Google Reviews (read-only display, section 5d)
+GOOGLE_PLACES_API_KEY=
+GOOGLE_PLACE_ID=
+
 PORT=5000
 ```
 
@@ -387,14 +466,15 @@ PORT=5000
 1. Set up Express app skeleton + Prisma + PostgreSQL connection
 2. Admin auth: username/password login + JWT-protected routes (build this early — everything else in the admin panel needs it)
 3. Categories + Products CRUD (admin) and read endpoints (public), including `metaTitle`/`metaDescription` fields
-4. Static pages (About/Terms/Contact) CRUD + read endpoints
+4. Static pages (About/Terms/Contact) CRUD + read endpoints, including the admin list endpoint (`GET /api/admin/pages`) so there's an actual admin screen to edit them from
 5. Blog CRUD + read endpoints
 6. Offers CRUD + public read endpoint
-7. Admin 2FA (TOTP setup/enable/disable/verify) — add once basic admin login works
-8. Image upload signature endpoint (`POST /api/admin/upload/signature`) — needed before the admin forms' image uploads can work at all; wire this up before building out the product/category/offer forms on the frontend
-9. Bulk import (preview + confirm endpoints, using the xlsx template) — build once product/category CRUD is solid, since import reuses the same validation rules
-10. Enquiry creation endpoint, including the `whatsappLink.js` builder (this is just string formatting, no external API — much simpler than the old OTP+WhatsApp-API flow, can be built and tested in one pass)
-11. Connect admin panel (Next.js) to all admin endpoints
+7. Reviews CRUD + public read endpoint (reuses the same image upload flow from section 5b for `customerPhoto`)
+8. Admin 2FA (TOTP setup/enable/disable/verify) — add once basic admin login works
+9. Image upload signature endpoint (`POST /api/admin/upload/signature`) — needed before the admin forms' image uploads can work at all; wire this up before building out the product/category/offer/review forms on the frontend
+10. Bulk import (preview + confirm endpoints, using the xlsx template) — build once product/category CRUD is solid, since import reuses the same validation rules
+11. Enquiry creation endpoint, including the `whatsappLink.js` builder (this is just string formatting, no external API — much simpler than the old OTP+WhatsApp-API flow, can be built and tested in one pass)
+12. Connect admin panel (Next.js) to all admin endpoints
 
 Building in this order means you have a working, testable backend at every step. Removing the OTP/WhatsApp-API dependency also removes what used to be the one external-approval bottleneck in this build — nothing in Phase 1 now depends on a third party approving anything.
 

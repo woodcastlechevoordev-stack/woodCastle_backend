@@ -11,6 +11,11 @@ const { publicRouter: productsPublic, adminRouter: productsAdmin } = require('./
 const { publicRouter: pagesPublic, adminRouter: pagesAdmin } = require('./modules/pages/pages.routes');
 const { publicRouter: blogPublic, adminRouter: blogAdmin } = require('./modules/blog/blog.routes');
 const { publicRouter: offersPublic, adminRouter: offersAdmin } = require('./modules/offers/offers.routes');
+const {
+  publicRouter: reviewsPublic,
+  googleReviewsRouter,
+  adminRouter: reviewsAdmin,
+} = require('./modules/reviews/reviews.routes');
 const { publicRouter: enquiriesPublic, adminRouter: enquiriesAdmin } = require('./modules/enquiries/enquiries.routes');
 const { adminRouter: importAdmin } = require('./modules/bulk-import/bulk-import.routes');
 const { adminRouter: uploadAdmin } = require('./modules/upload/upload.routes');
@@ -36,6 +41,8 @@ function createApp() {
   app.use('/api/pages', pagesPublic);
   app.use('/api/blog', blogPublic);
   app.use('/api/offers', offersPublic);
+  app.use('/api/reviews', reviewsPublic);
+  app.use('/api/google-reviews', googleReviewsRouter);
   app.use('/api/enquiries', enquiriesPublic);
 
   // Admin auth (login + 2FA)
@@ -47,6 +54,7 @@ function createApp() {
   app.use('/api/admin/pages', pagesAdmin);
   app.use('/api/admin/blog', blogAdmin);
   app.use('/api/admin/offers', offersAdmin);
+  app.use('/api/admin/reviews', reviewsAdmin);
   app.use('/api/admin/enquiries', enquiriesAdmin);
   app.use('/api/admin/import', importAdmin);
   app.use('/api/admin/upload', uploadAdmin);

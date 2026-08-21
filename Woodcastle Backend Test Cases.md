@@ -30,7 +30,7 @@ Method: API (`POST`/`PATCH`/`DELETE` `/api/admin/categories`, `GET` `/api/catego
 
 ## 2. Product Management
 
-Method: API. PROD-03, PROD-04, PROD-07 need admin/public UI. PROD-06 is the Cloudinary signature endpoint (section 5b).
+Method: API. PROD-03, PROD-04, PROD-07 need admin/public UI. PROD-06 is the Cloudinary signature endpoint (section 5b). PROD-10–13 cover duplicate product name detection (section 5a3).
 
 | ID | Test | Steps | Expected Result | Actual Result | Pass/Fail |
 |---|---|---|---|---|---|
@@ -43,6 +43,10 @@ Method: API. PROD-03, PROD-04, PROD-07 need admin/public UI. PROD-06 is the Clou
 | PROD-07 | Confirm the uploaded image displays on the live site | After PROD-06, view the product on the public `/product/[slug]` page | Image loads correctly, no broken image icon | Skipped — no public Next.js site in this repo; blocked by PROD-06. Product API does return `images[]` | N/A |
 | PROD-08 | Delete a product | `DELETE /api/admin/products/:id`, or use the Delete button in `/admin/products` | Confirmation prompt appears; after confirming, product is removed from the list and no longer appears on the public site | 200 via API (no confirm prompt — that is UI). Product gone from admin list; `GET /api/products/:slug` → 404 | Pass |
 | PROD-09 | Product list/detail includes SEO fields | `GET /api/products/:slug` | Response includes `metaTitle` and `metaDescription` | 200. Response includes `metaTitle` and `metaDescription` (plus id, name, slug, description, price, images, categoryId, createdAt, category) | Pass |
+| PROD-10 | Duplicate name check — unique name | `GET /api/admin/products/check-duplicate-name?name=Unique Chair&categoryId=<subcategory id>` | `{ isDuplicate: false }` — no suggested code/name/slug fields | | |
+| PROD-11 | Duplicate name check — same name in same subcategory | With an existing product named "Dining Chair" in that subcategory, call `GET /api/admin/products/check-duplicate-name?name=Dining Chair&categoryId=<that subcategory id>` | `{ isDuplicate: true, existingCount: 1, suggestedCode: "<subcategory initials>-02", suggestedName: "Dining Chair <code>", suggestedSlug }` | | |
+| PROD-12 | Duplicate name check — same name in a different subcategory | Same name as PROD-11, but `categoryId` is a different subcategory with no product of that name | `{ isDuplicate: false }` | | |
+| PROD-13 | Save-time slug collision is rejected | `POST /api/admin/products` with a name/slug that already exists in the catalog | 409 with a clear error that the slug already exists; no new product created | | |
 
 ---
 
