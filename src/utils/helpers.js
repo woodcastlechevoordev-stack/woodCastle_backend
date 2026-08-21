@@ -4,6 +4,24 @@ function toSlug(text) {
   return slugify(String(text), { lower: true, strict: true, trim: true });
 }
 
+/**
+ * Subcategory initials for duplicate product codes (spec §5a3).
+ * "Dining Chair" → "DC", "3 Seater Sofa" → "3SS".
+ * Tokens that are only punctuation (e.g. "&") are skipped.
+ */
+function categoryInitials(name) {
+  const initials = String(name || '')
+    .trim()
+    .split(/\s+/)
+    .filter((word) => /[A-Za-z0-9]/.test(word))
+    .map((word) => {
+      const match = word.match(/[A-Za-z0-9]/);
+      return match ? match[0].toUpperCase() : '';
+    })
+    .join('');
+  return initials || 'P';
+}
+
 function asyncHandler(fn) {
   return (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 }
@@ -40,6 +58,7 @@ function parseBooleanQuery(value) {
 
 module.exports = {
   toSlug,
+  categoryInitials,
   asyncHandler,
   parsePagination,
   paginatedResult,

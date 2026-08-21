@@ -44,6 +44,7 @@ model Product {
   metaDescription String?
   createdAt       DateTime  @default(now())
   enquiries       Enquiry[]
+  reviews         Review[]
 }
 
 model Offer {
@@ -115,6 +116,18 @@ model StaticPage {
   title     String
   content   String
   updatedAt DateTime @updatedAt
+}
+
+model Review {
+  id            String    @id @default(uuid())
+  customerName  String
+  rating        Int
+  reviewText    String
+  customerPhoto String?
+  productId     String?
+  product       Product?  @relation(fields: [productId], references: [id], onDelete: SetNull)
+  isActive      Boolean   @default(true)
+  createdAt     DateTime  @default(now())
 }
 
 model AdminUser {

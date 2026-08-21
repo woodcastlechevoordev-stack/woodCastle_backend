@@ -1,6 +1,7 @@
 const prisma = require('../../config/db');
 const {
   toSlug,
+  categoryInitials,
   parsePagination,
   paginatedResult,
   containsInsensitive,
@@ -102,6 +103,54 @@ async function getBySlug(slug) {
   return sanitizePublicProduct(product);
 }
 
+async function assertSlugAvailable(slug, excludeId) {
+  const existing = await prisma.product.findUnique({
+    where: { slug },
+    select: { id: true },
+  });
+  if (existing && existing.id !== excludeId) {
+    throw createError(
+      409,
+      `A product with slug "${slug}" already exists. Choose a different name or slug.`
+    );
+  }
+}
+
+/**
+ * Live duplicate-name check for the admin product form (spec §5a3).
+ * Duplicates are scoped to the selected subcategory only.
+ */
+async function checkDuplicateName({ name, categoryId }) {
+  const trimmedName = String(name ?? '').trim();
+  if (!trimmedName) throw createError(400, 'name is required');
+  if (!categoryId) throw createError(400, 'categoryId is required');
+
+  const category = await assertLeafCategory(categoryId);
+
+  const existingCount = await prisma.product.count({
+    where: {
+      categoryId,
+      name: { equals: trimmedName, mode: 'insensitive' },
+    },
+  });
+
+  if (existingCount === 0) {
+    return { isDuplicate: false };
+  }
+
+  const initials = categoryInitials(category.name);
+  const suggestedCode = `${initials}-${String(existingCount + 1).padStart(2, '0')}`;
+  const suggestedName = `${trimmedName} ${suggestedCode}`;
+
+  return {
+    isDuplicate: true,
+    existingCount,
+    suggestedCode,
+    suggestedName,
+    suggestedSlug: toSlug(suggestedName),
+  };
+}
+
 async function listAdmin(query = {}) {
   const where = {};
   if (query.categoryId) where.categoryId = query.categoryId;
@@ -132,6 +181,7 @@ async function create(data) {
   await assertLeafCategory(data.categoryId);
 
   const slug = data.slug?.trim() || toSlug(name);
+  await assertSlugAvailable(slug);
 
   return prisma.product.create({
     data: {
@@ -165,6 +215,10 @@ async function update(id, data) {
       ? data.slug.trim() || toSlug(name || existing.name)
       : undefined;
 
+  if (slug !== undefined) {
+    await assertSlugAvailable(slug, id);
+  }
+
   return prisma.product.update({
     where: { id },
     data: {
@@ -197,6 +251,7 @@ module.exports = {
   listPublic,
   getBySlug,
   listAdmin,
+  checkDuplicateName,
   create,
   update,
   remove,

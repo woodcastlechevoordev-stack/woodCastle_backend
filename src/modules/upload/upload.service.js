@@ -1,7 +1,7 @@
 const cloudinary = require('cloudinary').v2;
 const { createError } = require('../../middleware/errorHandler');
 
-const ALLOWED_FOLDERS = ['products', 'categories', 'offers', 'blog'];
+const ALLOWED_FOLDERS = ['products', 'categories', 'offers', 'blog', 'reviews'];
 
 function getCloudinaryConfig() {
   const cloudName = process.env.CLOUDINARY_CLOUD_NAME;

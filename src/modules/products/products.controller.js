@@ -16,6 +16,11 @@ const adminList = asyncHandler(async (req, res) => {
   res.json(products);
 });
 
+const checkDuplicateName = asyncHandler(async (req, res) => {
+  const result = await service.checkDuplicateName(req.query);
+  res.json(result);
+});
+
 const create = asyncHandler(async (req, res) => {
   const product = await service.create(req.body);
   res.status(201).json(product);
@@ -31,4 +36,12 @@ const remove = asyncHandler(async (req, res) => {
   res.json(result);
 });
 
-module.exports = { list, getBySlug, adminList, create, update, remove };
+module.exports = {
+  list,
+  getBySlug,
+  adminList,
+  checkDuplicateName,
+  create,
+  update,
+  remove,
+};
