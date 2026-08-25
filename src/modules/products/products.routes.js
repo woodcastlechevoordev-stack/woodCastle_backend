@@ -8,8 +8,8 @@ const adminRouter = express.Router();
 publicRouter.get('/', controller.list);
 publicRouter.get('/:slug', controller.getBySlug);
 
-adminRouter.get('/', adminAuth, controller.adminList);
 adminRouter.get('/check-duplicate-name', adminAuth, controller.checkDuplicateName);
+adminRouter.get('/', adminAuth, controller.adminList);
 adminRouter.post('/', adminAuth, controller.create);
 adminRouter.patch('/:id', adminAuth, controller.update);
 adminRouter.delete('/:id', adminAuth, controller.remove);

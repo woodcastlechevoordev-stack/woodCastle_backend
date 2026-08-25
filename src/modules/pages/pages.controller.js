@@ -16,4 +16,9 @@ const adminList = asyncHandler(async (req, res) => {
   res.json(pages);
 });
 
-module.exports = { getByKey, update, adminList };
+const adminGetByKey = asyncHandler(async (req, res) => {
+  const page = await service.getByKey(req.params.key);
+  res.json(page);
+});
+
+module.exports = { getByKey, update, adminList, adminGetByKey };

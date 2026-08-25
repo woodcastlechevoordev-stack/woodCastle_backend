@@ -5,21 +5,50 @@ function toSlug(text) {
 }
 
 /**
+ * Trailing auto-generated product code, e.g. " DC-02" or " 3SS-10".
+ * Spec §5a3 uses a pattern like /\s+[A-Z]{2,4}-\d{2,}$/; digits are allowed
+ * in the initials so codes from names like "3 Seater Sofa" still strip.
+ * Applied repeatedly so stacked suffixes never become the base name.
+ */
+const PRODUCT_CODE_SUFFIX = /\s+[A-Z0-9]{2,4}-\d{2,}$/i;
+
+function stripProductCodeSuffix(name) {
+  let base = String(name ?? '').trim();
+  let stripped = base.replace(PRODUCT_CODE_SUFFIX, '').trim();
+  while (stripped !== base) {
+    base = stripped;
+    stripped = base.replace(PRODUCT_CODE_SUFFIX, '').trim();
+  }
+  return base;
+}
+
+/**
  * Subcategory initials for duplicate product codes (spec §5a3).
  * "Dining Chair" → "DC", "3 Seater Sofa" → "3SS".
+ * Always 2–4 chars so the suffix strip pattern can reverse them.
  * Tokens that are only punctuation (e.g. "&") are skipped.
  */
 function categoryInitials(name) {
-  const initials = String(name || '')
+  const words = String(name || '')
     .trim()
     .split(/\s+/)
-    .filter((word) => /[A-Za-z0-9]/.test(word))
+    .filter((word) => /[A-Za-z0-9]/.test(word));
+
+  let initials = words
     .map((word) => {
       const match = word.match(/[A-Za-z0-9]/);
       return match ? match[0].toUpperCase() : '';
     })
     .join('');
-  return initials || 'P';
+
+  if (initials.length < 2) {
+    const alnum = String(name || '')
+      .replace(/[^A-Za-z0-9]/g, '')
+      .toUpperCase();
+    initials = `${alnum}PR`.slice(0, 2);
+  }
+
+  return initials.slice(0, 4);
 }
 
 function asyncHandler(fn) {
@@ -59,6 +88,7 @@ function parseBooleanQuery(value) {
 module.exports = {
   toSlug,
   categoryInitials,
+  stripProductCodeSuffix,
   asyncHandler,
   parsePagination,
   paginatedResult,
