@@ -168,7 +168,6 @@ model Review {
   isActive      Boolean    @default(true)   // admin controls what's actually visible on the site
   createdAt     DateTime   @default(now())
 }
-
 model AdminUser {
   id            String     @id @default(uuid())
   username      String     @unique
@@ -289,7 +288,10 @@ POST   /api/admin/import/confirm    # body: { importId } -> commits the previous
 GET    /api/admin/import/history    # list of past BulkImportLog entries
 
 GET    /api/admin/pages            # list all StaticPage entries (about/terms/contact) for the admin's
-                                     # site content editor — public GET /api/pages/:key only fetches one at a time
+                                     # site content list screen
+GET    /api/admin/pages/:key       # single page's current title/content - the edit form MUST call
+                                     # this on load to pre-fill the form; it is not optional, and
+                                     # is a different endpoint from the list above
 PATCH  /api/admin/pages/:key       # edit about/terms/contact content
 
 GET    /api/admin/reviews          # returns ALL reviews regardless of isActive — accepts ?search=
@@ -346,20 +348,23 @@ Product descriptions support formatting (bold, italic, text color, bullet/number
 
 **No schema change needed** — the generated code gets appended directly into the `name` field itself (and the `slug` derived from that new name), not stored as a separate column. This keeps the fix contained to name/slug generation rather than adding a new concept to the data model.
 
-1. As the admin types a product name (and has a subcategory selected), the frontend calls `GET /api/admin/products/check-duplicate-name?name=<name>&categoryId=<subcategoryId>` (debounced, same pattern as the search suggestions — don't fire on every keystroke).
-2. Backend checks for existing products with the same name (case-insensitive) **within that exact subcategory only** — a "Dining Chair" in a different subcategory doesn't count as a duplicate.
-3. If matches exist, generate a short code: take the subcategory's initials (e.g. "Dining Chair" → `DC`) plus a running number one higher than the current match count, zero-padded to 2 digits (e.g. `DC-02` for the second one). Response:
+**The bug to specifically avoid — always compare and build from the base name, never from a previously-suggested name.** A real implementation of this produced `"Dining Chair DC-02 DC-2"` on the third product, because it took whatever the admin had already typed (which by then included a previous suggestion) and appended a new code onto *that*, instead of stripping any existing code pattern first and rebuilding cleanly from the true base name. The algorithm must do this on every check, not just the first one:
+
+1. **Strip any existing product-code suffix from the input name first**, using a fixed pattern like `/\s+[A-Z]{2,4}-\d{2,}$/` (matches things like `" DC-02"` at the end of a string) — whatever remains after stripping is the **base name**. If the admin typed "Dining Chair" fresh, the base name is just "Dining Chair." If the admin is re-checking a name that already got suggested once ("Dining Chair DC-02") and it still somehow gets re-submitted, the base name after stripping is still "Dining Chair" — never "Dining Chair DC-02."
+2. As the admin types (and has a subcategory selected), the frontend calls `GET /api/admin/products/check-duplicate-name?name=<name>&categoryId=<subcategoryId>` (debounced, same pattern as the search suggestions — don't fire on every keystroke). Send the raw typed value; stripping happens server-side per step 1.
+3. Backend counts existing products whose name, **after the same stripping rule is applied to them too**, case-insensitively equals the base name — **within that exact subcategory only** (a "Dining Chair" in a different subcategory doesn't count).
+4. Generate the code fresh from the base name and the count: subcategory initials (e.g. "Dining Chair" → `DC`) plus `existingCount + 1`, zero-padded to 2 digits — **always 2 digits, `02` through `09`, then `10`, `11`, etc. — never a mix like `2` in one response and `02` in another.** `suggestedName` is always `baseName + " " + code`, built fresh — never the old name with something else appended onto it.
    ```json
    {
      "isDuplicate": true,
-     "existingCount": 1,
-     "suggestedCode": "DC-02",
-     "suggestedName": "Dining Chair DC-02",
-     "suggestedSlug": "dining-chair-dc-02"
+     "existingCount": 2,
+     "suggestedCode": "DC-03",
+     "suggestedName": "Dining Chair DC-03",
+     "suggestedSlug": "dining-chair-dc-03"
    }
    ```
-   If no match, `isDuplicate: false` and the rest of the fields are omitted.
-4. **Safety net at save time:** even if the frontend check is somehow skipped or stale, `POST /api/admin/products` should still reject a request whose generated slug would collide with an existing one, returning a clear error — the live-check is a convenience, not the only line of defense.
+   (This example shows the *third* "Dining Chair" — two already exist, so `existingCount: 2` and the new one is `DC-03`.) If no match after stripping, `isDuplicate: false` and the rest of the fields are omitted.
+5. **Safety net at save time:** even if the frontend check is somehow skipped or stale, `POST /api/admin/products` should still reject a request whose generated slug would collide with an existing one, returning a clear error — the live-check is a convenience, not the only line of defense.
 
 See section 8 of the frontend spec ("Duplicate product name detection") for the confirmation dialog and field-update behavior this powers.
 

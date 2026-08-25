@@ -4,7 +4,7 @@ How to use this: work through each row, fill in **Actual Result** and **Pass/Fai
 
 **Base URL:** `http://localhost:5001` (local API; method: curl/fetch against the running Express server)
 
-**Tested:** 13 Aug 2026. Admin login `admin` / `admin123`. QA data created then cleaned up. 2FA was enabled for AUTH-03–06 then disabled again (AUTH-07). UI-only cases marked N/A because this repo has no admin panel or public Next.js site.
+**Tested:** 13 Aug 2026 (original suite). Re-run 25 Aug 2026 for Spec (4) additions: PROD-10–14, MISC-05, MISC-06, REV-01–05, GREV-01. Admin login `admin` / `admin123`. QA data created then cleaned up. 2FA was enabled for AUTH-03–06 then disabled again (AUTH-07). UI-only cases marked N/A because this repo has no admin panel or public Next.js site.
 
 ---
 
@@ -30,7 +30,7 @@ Method: API (`POST`/`PATCH`/`DELETE` `/api/admin/categories`, `GET` `/api/catego
 
 ## 2. Product Management
 
-Method: API. PROD-03, PROD-04, PROD-07 need admin/public UI. PROD-06 is the Cloudinary signature endpoint (section 5b). PROD-10–13 cover duplicate product name detection (section 5a3).
+Method: API. PROD-03, PROD-04, PROD-07 need admin/public UI. PROD-06 is the Cloudinary signature endpoint (section 5b). PROD-10–14 cover duplicate product name detection (section 5a3), including stripping a previously-suggested code so names never stack (`Dining Chair DC-02 DC-03`).
 
 | ID | Test | Steps | Expected Result | Actual Result | Pass/Fail |
 |---|---|---|---|---|---|
@@ -43,10 +43,11 @@ Method: API. PROD-03, PROD-04, PROD-07 need admin/public UI. PROD-06 is the Clou
 | PROD-07 | Confirm the uploaded image displays on the live site | After PROD-06, view the product on the public `/product/[slug]` page | Image loads correctly, no broken image icon | Skipped — no public Next.js site in this repo; blocked by PROD-06. Product API does return `images[]` | N/A |
 | PROD-08 | Delete a product | `DELETE /api/admin/products/:id`, or use the Delete button in `/admin/products` | Confirmation prompt appears; after confirming, product is removed from the list and no longer appears on the public site | 200 via API (no confirm prompt — that is UI). Product gone from admin list; `GET /api/products/:slug` → 404 | Pass |
 | PROD-09 | Product list/detail includes SEO fields | `GET /api/products/:slug` | Response includes `metaTitle` and `metaDescription` | 200. Response includes `metaTitle` and `metaDescription` (plus id, name, slug, description, price, images, categoryId, createdAt, category) | Pass |
-| PROD-10 | Duplicate name check — unique name | `GET /api/admin/products/check-duplicate-name?name=Unique Chair&categoryId=<subcategory id>` | `{ isDuplicate: false }` — no suggested code/name/slug fields | | |
-| PROD-11 | Duplicate name check — same name in same subcategory | With an existing product named "Dining Chair" in that subcategory, call `GET /api/admin/products/check-duplicate-name?name=Dining Chair&categoryId=<that subcategory id>` | `{ isDuplicate: true, existingCount: 1, suggestedCode: "<subcategory initials>-02", suggestedName: "Dining Chair <code>", suggestedSlug }` | | |
-| PROD-12 | Duplicate name check — same name in a different subcategory | Same name as PROD-11, but `categoryId` is a different subcategory with no product of that name | `{ isDuplicate: false }` | | |
-| PROD-13 | Save-time slug collision is rejected | `POST /api/admin/products` with a name/slug that already exists in the catalog | 409 with a clear error that the slug already exists; no new product created | | |
+| PROD-10 | Duplicate name check — unique name | `GET /api/admin/products/check-duplicate-name?name=Unique Chair&categoryId=<subcategory id>` | `{ isDuplicate: false }` — no suggested code/name/slug fields | 200 `{ isDuplicate: false }` — no suggestedCode/suggestedName/suggestedSlug | Pass |
+| PROD-11 | Duplicate name check — same name in same subcategory | With an existing product named "Dining Chair" in that subcategory, call `GET /api/admin/products/check-duplicate-name?name=Dining Chair&categoryId=<that subcategory id>` | `{ isDuplicate: true, existingCount: 1, suggestedCode: "<subcategory initials>-02" }` (always 2-digit padding), `suggestedName` is `baseName + " " + code` (e.g. `"Dining Chair DC-02"`), plus `suggestedSlug` | 200. `isDuplicate: true`, `existingCount: 1`, `suggestedCode` ends in `-02` (2-digit pad), `suggestedName` is `baseName + " " + code`, plus `suggestedSlug` | Pass |
+| PROD-12 | Duplicate name check — same name in a different subcategory | Same name as PROD-11, but `categoryId` is a different subcategory with no product of that name | `{ isDuplicate: false }` | 200 `{ isDuplicate: false }` | Pass |
+| PROD-13 | Save-time slug collision is rejected | `POST /api/admin/products` with a name/slug that already exists in the catalog | 409 with a clear error that the slug already exists; no new product created | 409 `{ error: "A product with slug \"…\" already exists. Choose a different name or slug." }` | Pass |
+| PROD-14 | Duplicate name check strips a previously-suggested code | With 2 products whose stripped names equal "Dining Chair" (e.g. `"Dining Chair"` and `"Dining Chair DC-02"`), call check with `name=Dining Chair DC-02` (or even `"Dining Chair DC-02 DC-03"`) | `{ isDuplicate: true, existingCount: 2, suggestedCode: "<initials>-03", suggestedName: "Dining Chair <code>" }` — must **not** be `"Dining Chair DC-02 DC-03"` or mix padded/unpadded digits like `DC-2` | 200. `existingCount: 2`, `suggestedCode` ends in `-03`, `suggestedName` rebuilt from the base name (not stacked). Same result when the input already had two suffixes | Pass |
 
 ---
 
@@ -108,13 +109,30 @@ Method: API. MISC-01 is the Cloudinary signature endpoint with `folder: "offers"
 | MISC-02 | Offer respects active date window | Create an offer with a future `startsAt` | Offer does NOT appear in `GET /api/offers` until that date | 201 created with `startsAt` 2026-08-19. `GET /api/offers` did not include it | Pass |
 | MISC-03 | Create and publish a blog post | Use the admin blog editor, publish | Post appears at `/blog` and `/blog/[slug]` on the public site | 201 via `POST /api/admin/blog` with `published: true`. Appears in `GET /api/blog` and `GET /api/blog/:slug` (200). Public Next.js routes not in this repo | Pass |
 | MISC-04 | Edit static page content (About/Terms/Contact) | `PATCH /api/admin/pages/:key` | Public page reflects the updated content | 200. `GET /api/pages/about` returned the patched content. Original About content was restored after the test | Pass |
+| MISC-05 | List all static pages in admin | `GET /api/admin/pages` with admin JWT | 200 with all StaticPage entries (about/terms/contact), not just one key | 200. Keys: `about`, `contact`, `terms` | Pass |
+| MISC-06 | Load one static page for the admin edit form | `GET /api/admin/pages/:key` with admin JWT (e.g. `about`) | 200 with that page's current `title` and `content` — distinct from the list endpoint; used to pre-fill the edit form | 200. `key: "about"`, `title: "About Woodcastle"`, `content` present. Unauthenticated call → 401. Unknown key → 404. `GET /api/admin/pages` still returns the list | Pass |
+
+---
+
+## 7. Reviews (admin-curated + Google proxy)
+
+Method: API. REV-01–05 cover the admin-entered `Review` model. GREV-01 is the server-side Google Places proxy (section 5d) — never call Google from the browser.
+
+| ID | Test | Steps | Expected Result | Actual Result | Pass/Fail |
+|---|---|---|---|---|---|
+| REV-01 | Create a site-wide testimonial | `POST /api/admin/reviews` with `{ customerName, rating: 5, reviewText }` and no `productId` | 201, review created with `productId: null`, `isActive: true` | 201. `productId: null`, `isActive: true` | Pass |
+| REV-02 | Create a product-tied review | `POST /api/admin/reviews` with a valid `productId` | 201, review linked to that product | 201. `productId` matched the product created in PROD-11 | Pass |
+| REV-03 | Public list returns only active site-wide testimonials | `GET /api/reviews` with no `productId` | 200, only `isActive: true` reviews with `productId: null` | 200. Site-wide review present; every item had `productId: null` | Pass |
+| REV-04 | Public list can filter by product | `GET /api/reviews?productId=<id>` | 200, only active reviews for that product | 200. Only the product-tied review; all items matched that `productId` | Pass |
+| REV-05 | Inactive review is hidden from the public site | `PATCH /api/admin/reviews/:id` with `{ isActive: false }`, then `GET /api/reviews` | Review is gone from the public list but still in `GET /api/admin/reviews` | Patch 200. Public list no longer included it; admin list with `?search=` still did | Pass |
+| GREV-01 | Google reviews proxy | `GET /api/google-reviews` | 200 `{ rating, totalReviews, reviews }` with at most 5 reviews (`authorName`, `rating`, `text`, `relativeTimeDescription`, `profilePhotoUrl`). If env vars are missing, 503 with a clear config error — never expose the API key | 503 `{ error: "Google Places is not configured. Set GOOGLE_PLACES_API_KEY and GOOGLE_PLACE_ID." }` — expected in this local env; API key not exposed | Pass |
 
 ---
 
 ## Summary (fill in after testing)
 
-- Total tests run: `40` (plus 5 UI-only N/A)
-- Passed: `40`
+- Total tests run: `53` (plus 5 UI-only N/A)
+- Passed: `53`
 - Failed: `0`
 - N/A (admin/public UI not in this repo): `5` — CAT-03, CAT-04, PROD-03, PROD-04, PROD-07
-- Critical failures (block launch): none. PROD-06 and MISC-01 now pass against `POST /api/admin/upload/signature` (Cloudinary signed upload). The file never goes through this backend; `POST /api/admin/upload` 404 is expected. Catalog, import (including 5+/6+ subcategories), auth/2FA, enquiries, offers date window, blog, and pages all passed.
+- Critical failures (block launch): none. Spec (4) coverage added 25 Aug 2026: PROD-10–14 (duplicate-name detection, including suffix stripping so names never stack), MISC-05 (`GET /api/admin/pages`), MISC-06 (`GET /api/admin/pages/:key` for the admin edit form), REV-01–05 (admin-curated reviews), GREV-01 (Google Places proxy — 503 until `GOOGLE_PLACES_API_KEY` / `GOOGLE_PLACE_ID` are set). Catalog, import (including 5+/6+ subcategories), auth/2FA, enquiries, offers date window, blog, and pages all passed.

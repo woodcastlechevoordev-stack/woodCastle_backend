@@ -8,6 +8,7 @@ const adminRouter = express.Router();
 publicRouter.get('/:key', controller.getByKey);
 
 adminRouter.get('/', adminAuth, controller.adminList);
+adminRouter.get('/:key', adminAuth, controller.adminGetByKey);
 adminRouter.patch('/:key', adminAuth, controller.update);
 
 module.exports = { publicRouter, adminRouter };

@@ -2,6 +2,7 @@ const prisma = require('../../config/db');
 const {
   toSlug,
   categoryInitials,
+  stripProductCodeSuffix,
   parsePagination,
   paginatedResult,
   containsInsensitive,
@@ -118,6 +119,8 @@ async function assertSlugAvailable(slug, excludeId) {
 
 /**
  * Live duplicate-name check for the admin product form (spec §5a3).
+ * Always strip any existing product-code suffix first, then compare and
+ * rebuild from that base name — never append a new code onto a previous suggestion.
  * Duplicates are scoped to the selected subcategory only.
  */
 async function checkDuplicateName({ name, categoryId }) {
@@ -126,13 +129,18 @@ async function checkDuplicateName({ name, categoryId }) {
   if (!categoryId) throw createError(400, 'categoryId is required');
 
   const category = await assertLeafCategory(categoryId);
+  const baseName = stripProductCodeSuffix(trimmedName);
+  if (!baseName) throw createError(400, 'name is required');
 
-  const existingCount = await prisma.product.count({
-    where: {
-      categoryId,
-      name: { equals: trimmedName, mode: 'insensitive' },
-    },
+  const products = await prisma.product.findMany({
+    where: { categoryId },
+    select: { name: true },
   });
+
+  const baseNameLower = baseName.toLowerCase();
+  const existingCount = products.filter(
+    (product) => stripProductCodeSuffix(product.name).toLowerCase() === baseNameLower
+  ).length;
 
   if (existingCount === 0) {
     return { isDuplicate: false };
@@ -140,7 +148,7 @@ async function checkDuplicateName({ name, categoryId }) {
 
   const initials = categoryInitials(category.name);
   const suggestedCode = `${initials}-${String(existingCount + 1).padStart(2, '0')}`;
-  const suggestedName = `${trimmedName} ${suggestedCode}`;
+  const suggestedName = `${baseName} ${suggestedCode}`;
 
   return {
     isDuplicate: true,
