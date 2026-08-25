@@ -2,6 +2,7 @@ const cloudinary = require('cloudinary').v2;
 const { createError } = require('../../middleware/errorHandler');
 
 const ALLOWED_FOLDERS = ['products', 'categories', 'offers', 'blog', 'reviews'];
+const UPLOAD_FORMAT = 'webp';
 
 function getCloudinaryConfig() {
   const cloudName = process.env.CLOUDINARY_CLOUD_NAME;
@@ -27,8 +28,9 @@ function createSignature(folderInput) {
   }
 
   const timestamp = Math.round(Date.now() / 1000);
+  const format = UPLOAD_FORMAT;
   const signature = cloudinary.utils.api_sign_request(
-    { timestamp, folder },
+    { timestamp, folder, format },
     apiSecret
   );
 
@@ -38,10 +40,12 @@ function createSignature(folderInput) {
     apiKey,
     cloudName,
     folder,
+    format,
   };
 }
 
 module.exports = {
   ALLOWED_FOLDERS,
+  UPLOAD_FORMAT,
   createSignature,
 };

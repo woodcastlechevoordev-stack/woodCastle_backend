@@ -153,6 +153,7 @@ async function checkDuplicateName({ name, categoryId }) {
   return {
     isDuplicate: true,
     existingCount,
+    baseName,
     suggestedCode,
     suggestedName,
     suggestedSlug: toSlug(suggestedName),
