@@ -376,20 +376,23 @@ This was previously described only narratively ("direct-to-Cloudinary signed upl
 
 **The file itself never touches this backend.** This backend's only job is to hand the frontend a short-lived, signed permission slip to upload directly to Cloudinary. This keeps large image uploads off your Render instance entirely.
 
-1. **Frontend requests a signature** before uploading: `POST /api/admin/upload/signature` (admin JWT required), optional body `{ folder: "products" }` (or `"categories"`, `"offers"`, `"blog"`).
-2. **Backend generates the signature** server-side using the Cloudinary API secret (via the `cloudinary` npm SDK's `utils.api_sign_request`), based on a timestamp and the target folder — the secret itself never leaves the backend. Response:
+1. **Frontend requests a signature** before uploading: `POST /api/admin/upload/signature` (admin JWT required), optional body `{ folder: "products" }` (or `"categories"`, `"offers"`, `"blog"`, `"reviews"`).
+2. **Backend generates the signature** server-side using the Cloudinary API secret (via the `cloudinary` npm SDK's `utils.api_sign_request`), based on a timestamp, the target folder, **and a fixed `format: "webp"` parameter** — this is what converts every upload to WebP regardless of what the admin's phone/camera produced (JPEG, PNG, HEIC, etc.), so the signature itself must include `format` since it's part of what gets signed. Response:
    ```json
    {
      "signature": "a1b2c3...",
      "timestamp": 1755000000,
      "apiKey": "your_cloudinary_api_key",
      "cloudName": "your_cloud_name",
-     "folder": "products"
+     "folder": "products",
+     "format": "webp"
    }
    ```
-3. **Frontend uploads directly to Cloudinary** using these values — a plain multipart `POST` from the browser to `https://api.cloudinary.com/v1_1/<cloudName>/image/upload`, with the file plus `signature`, `timestamp`, `api_key`, and `folder` as form fields. This request goes straight to Cloudinary's servers, not this backend.
-4. **Cloudinary responds directly to the frontend** with the uploaded image's `secure_url`.
-5. **Frontend saves that URL** as part of the normal product/category/offer create-or-update call (e.g. `POST /api/admin/products` with `images: ["https://res.cloudinary.com/.../image.jpg"]`) — same as if the URL had been typed in manually.
+3. **Frontend uploads directly to Cloudinary** using these values — a plain multipart `POST` from the browser to `https://api.cloudinary.com/v1_1/<cloudName>/image/upload`, with the file plus `signature`, `timestamp`, `api_key`, `folder`, **and `format`** as form fields — all four non-file fields must exactly match what was signed, or Cloudinary rejects the upload as tampered. This request goes straight to Cloudinary's servers, not this backend.
+4. **Cloudinary converts the file to WebP during the upload itself** and responds directly to the frontend with the uploaded image's `secure_url` — already ending in `.webp`, already the smaller file, no separate conversion step or job needed anywhere.
+5. **Frontend saves that URL** as part of the normal product/category/offer create-or-update call (e.g. `POST /api/admin/products` with `images: ["https://res.cloudinary.com/.../image.webp"]`) — same as if the URL had been typed in manually.
+
+**Why convert at upload instead of at delivery:** Cloudinary can also serve any stored image as WebP on the fly via a `f_auto` URL parameter without changing what's stored — that's actually Cloudinary's own recommended default, since `f_auto` picks the best format per visitor's browser (sometimes AVIF, which beats WebP). Converting at upload time instead, as specified here, is a deliberate simplification: every stored file is WebP, every URL in the database is already final, and there's no per-image transformation logic to maintain anywhere else in the app. The trade-off is giving up that occasional extra saving from AVIF — reasonable for a catalog this size, and easy to revisit later if it ever matters.
 
 This is why `POST /api/admin/upload` returning a 404 in testing was expected once you know the real contract — that route was never meant to accept the file. The only backend route needed is the signature endpoint above.
 
@@ -493,3 +496,4 @@ Building in this order means you have a working, testable backend at every step.
 - True server-side WhatsApp auto-send (Business API) — deliberately not used in Phase 1; the `wa.me` click-to-chat link requires the customer to tap send themselves, which is the accepted trade-off for avoiding API cost and business verification
 - Rate limiting / spam protection on the enquiry form (recommended even for Phase 1, and more relevant now that there's no OTP step filtering submissions — add `express-rate-limit` on `/api/enquiries`)
 - Admin 2FA recovery process if a device is lost (needs a manual/support-based recovery path before real client handoff)
+- **Retroactive conversion of already-uploaded images:** the WebP conversion in section 5b only applies going forward — any image uploaded before this was added stays in its original format (JPEG/PNG) unless someone re-uploads it. A one-time cleanup script (loop through existing Cloudinary assets, request a WebP-converted copy, update the stored URLs) is a separate small task if converting the existing catalog's images matters, not something this spec assumes happens automatically
