@@ -7,14 +7,19 @@ const prisma = new PrismaClient();
 
 async function main() {
   const username = process.env.SEED_ADMIN_USERNAME || 'admin';
-  const password = process.env.SEED_ADMIN_PASSWORD || 'admin123';
+  const password = process.env.SEED_ADMIN_PASSWORD;
   const email = process.env.SEED_ADMIN_EMAIL || 'admin@woodcastle.local';
+  const resetPassword = process.env.SEED_ADMIN_RESET === 'true';
+
+  if (!password) {
+    throw new Error('Set SEED_ADMIN_PASSWORD in the environment before seeding.');
+  }
 
   const passwordHash = await bcrypt.hash(password, 12);
 
   const admin = await prisma.adminUser.upsert({
     where: { username },
-    update: {},
+    update: resetPassword ? { passwordHash, email } : {},
     create: {
       username,
       email,
@@ -50,9 +55,7 @@ async function main() {
   }
 
   // eslint-disable-next-line no-console
-  console.log('Seed complete.');
-  // eslint-disable-next-line no-console
-  console.log(`Admin user: ${admin.username} / ${password}`);
+  console.log(`Seed complete. Admin user: ${admin.username}`);
 }
 
 main()

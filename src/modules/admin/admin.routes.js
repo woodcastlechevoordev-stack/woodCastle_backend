@@ -10,5 +10,6 @@ router.post('/login/verify-totp', controller.verifyTotp);
 router.post('/2fa/setup', adminAuth, controller.setup2fa);
 router.post('/2fa/enable', adminAuth, controller.enable2fa);
 router.post('/2fa/disable', adminAuth, controller.disable2fa);
+router.post('/settings/password', adminAuth, controller.changePassword);
 
 module.exports = router;

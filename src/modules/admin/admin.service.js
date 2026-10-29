@@ -143,6 +143,29 @@ async function enable2fa(adminId, code) {
   };
 }
 
+async function changePassword(adminId, currentPassword, newPassword) {
+  if (!currentPassword || !newPassword) {
+    throw createError(400, 'Current password and new password are required');
+  }
+  if (String(newPassword).length < 8) {
+    throw createError(400, 'New password must be at least 8 characters');
+  }
+
+  const admin = await prisma.adminUser.findUnique({ where: { id: adminId } });
+  if (!admin) throw createError(404, 'Admin not found');
+
+  const ok = await bcrypt.compare(currentPassword, admin.passwordHash);
+  if (!ok) throw createError(401, 'Current password is incorrect');
+
+  const passwordHash = await bcrypt.hash(String(newPassword), 12);
+  await prisma.adminUser.update({
+    where: { id: adminId },
+    data: { passwordHash },
+  });
+
+  return { message: 'Password updated' };
+}
+
 async function disable2fa(adminId, password) {
   if (!password) throw createError(400, 'Password is required');
 
@@ -166,5 +189,6 @@ module.exports = {
   setup2fa,
   enable2fa,
   disable2fa,
+  changePassword,
   signAdminToken,
 };

@@ -26,10 +26,20 @@ const disable2fa = asyncHandler(async (req, res) => {
   res.json(result);
 });
 
+const changePassword = asyncHandler(async (req, res) => {
+  const result = await adminService.changePassword(
+    req.admin.id,
+    req.body.currentPassword,
+    req.body.newPassword
+  );
+  res.json(result);
+});
+
 module.exports = {
   login,
   verifyTotp,
   setup2fa,
   enable2fa,
   disable2fa,
+  changePassword,
 };
